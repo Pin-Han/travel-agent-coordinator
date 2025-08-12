@@ -1,0 +1,19 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "uuidv",
+    "gemini",
+    "taiwanese",
+    "tsconfig",
+    "metrio",
+    "Metrio",
+    "METRIO",
+    "HTTPAPI"
+  ],
+  "ignorePaths": [
+    "node_modules/**",
+    "dist/**",
+    "*.log"
+  ]
+}

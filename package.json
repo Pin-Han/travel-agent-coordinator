@@ -1,0 +1,40 @@
+{
+  "name": "travel-agent-coordinator",
+  "version": "1.0.0",
+  "description": "A2A Travel Agent Coordinator with Google Gemini integration",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "a2a",
+    "agent",
+    "coordinator",
+    "travel",
+    "metrio-ai"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@a2a-js/sdk": "^0.3.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "uuid": "^11.0.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^22.10.2",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
