@@ -17,11 +17,11 @@
 cp .env.example .env
 ```
 
-編輯 `.env` 文件，填入以下必要的 API 金鑰：
+編輯 `.env` 文件，填入必要的 API 金鑰：
 
 ```bash
-# Metrio AI API 金鑰 (必須)
-METRIO_AI_API_KEY=your_metrio_ai_api_key_here
+# Anthropic API 金鑰 (必須)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
 
 ### 3. 安裝並啟動
@@ -44,12 +44,12 @@ npm run dev
 
 ## 🔑 API 金鑰取得方式
 
-### Metrio AI API
+### Anthropic API
 
-1. 前往 [Metrio AI](https://metrio.ai/)
+1. 前往 [Anthropic Console](https://console.anthropic.com/)
 2. 註冊並登入帳戶
-3. 取得您的 API 金鑰
-4. 將金鑰填入 `.env` 文件的 `METRIO_AI_API_KEY`
+3. 建立 API 金鑰
+4. 將金鑰填入 `.env` 文件的 `ANTHROPIC_API_KEY`
 
 ## 🧪 快速測試
 
@@ -84,12 +84,6 @@ curl -X POST http://localhost:3000/message/send \
   }'
 ```
 
-### 使用測試客戶端
-
-```bash
-node test-client.js
-```
-
 ## 📋 可用端點
 
 - `GET /.well-known/agent-card.json` - 取得代理卡片
@@ -98,8 +92,6 @@ node test-client.js
 - `POST /tasks/get` - 查詢任務狀態
 - `POST /tasks/cancel` - 取消任務
 - `GET /health` - 健康檢查
-- `GET /status` - 服務狀態
-- `GET /docs` - API 文檔
 
 ## 🔧 配置選項
 
@@ -110,13 +102,13 @@ node test-client.js
 PORT=3000
 NODE_ENV=development
 
+# Agent 模式 (api = 直接 LLM, a2a = 獨立 sub-agent process)
+ATTRACTIONS_MODE=api
+ACCOMMODATION_MODE=api
+
 # 協調設定
 MAX_COORDINATION_STEPS=10
 TASK_TIMEOUT_MS=300000
-
-# 代理設定
-COORDINATOR_AGENT_NAME=Travel Coordinator Agent
-COORDINATOR_AGENT_DESCRIPTION=智能旅遊規劃協調服務
 ```
 
 ## ❗ 常見問題
@@ -130,27 +122,8 @@ npm run clean
 npm run build
 ```
 
-### API 連接錯誤
-
-- 檢查 API 金鑰是否正確設定
-- 確認網路連接正常
-- 查看控制台輸出的錯誤訊息
-
 ### 服務無法啟動
 
-- 檢查 PORT 是否被其他服務占用
-- 確認所有必要的環境變數都已設定
-
-## 🎯 下一步
-
-1. 查看 [README.md](./README.md) 了解詳細功能
-2. 查看 [API 文檔](http://localhost:3000/docs) 了解完整 API
-3. 自定義 Prompt 或添加新的代理服務
-
-## 💬 支援
-
-如需協助，請：
-
-1. 檢查日誌輸出
-2. 查看 GitHub Issues
-3. 聯絡開發團隊
+- 檢查 `ANTHROPIC_API_KEY` 是否正確設定
+- 確認 PORT 是否被其他服務占用
+- 查看控制台輸出的錯誤訊息

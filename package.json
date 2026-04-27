@@ -1,26 +1,38 @@
 {
   "name": "travel-agent-coordinator",
   "version": "1.0.0",
-  "description": "A2A Travel Agent Coordinator with Google Gemini integration",
+  "description": "Multi-agent travel planner built on Google's A2A Protocol — coordinator dispatches to independent AI agents via JSON-RPC 2.0",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:attractions": "node dist/servers/attractionsServer.js",
+    "start:accommodation": "node dist/servers/accommodationServer.js",
     "dev": "tsx watch src/index.ts",
+    "dev:attractions": "tsx watch src/servers/attractionsServer.ts",
+    "dev:accommodation": "tsx watch src/servers/accommodationServer.ts",
+    "dev:web": "cd web && npm run dev",
+    "kill-ports": "for port in 3000 3001 3002 5173; do pid=$(lsof -ti tcp:$port 2>/dev/null); [ -n \"$pid\" ] && kill -9 $pid && echo \"killed :$port\"; done",
+    "dev:all": "concurrently --names \"coordinator,attractions,accommodation,web\" --prefix-colors \"blue,green,yellow,magenta\" \"npm run dev\" \"npm run dev:attractions\" \"npm run dev:accommodation\" \"npm run dev:web\"",
+    "dev:agents": "concurrently --names \"coordinator,attractions,accommodation\" --prefix-colors \"blue,green,yellow\" \"npm run dev\" \"npm run dev:attractions\" \"npm run dev:accommodation\"",
     "clean": "rm -rf dist"
   },
   "keywords": [
-    "a2a",
-    "agent",
-    "coordinator",
-    "travel",
-    "metrio-ai"
+    "a2a-protocol",
+    "multi-agent",
+    "ai-agents",
+    "anthropic",
+    "typescript",
+    "nodejs",
+    "agent-to-agent"
   ],
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
     "@a2a-js/sdk": "^0.3.1",
+    "@anthropic-ai/sdk": "^0.91.1",
+    "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
@@ -34,6 +46,7 @@
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.10.2",
     "@types/uuid": "^10.0.0",
+    "concurrently": "^9.2.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

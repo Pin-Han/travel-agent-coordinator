@@ -12,7 +12,8 @@ import {
 } from "@a2a-js/sdk";
 import { v4 as uuidv4 } from "uuid";
 
-import { MetrioAIClient } from "../services/metrioClient.js";
+import { createLLMClient, LLMProvider } from "../services/llmClient.js";
+import { getPrompts } from "../services/promptStore.js";
 import { AgentRegistryService } from "../services/agentRegistry.js";
 import { TaskStoreService } from "../services/taskStore.js";
 import { CoordinatorConfig } from "../types/index.js";
@@ -21,14 +22,12 @@ import { CoordinatorConfig } from "../types/index.js";
 const contexts: Map<string, Message[]> = new Map();
 
 export class TravelCoordinatorExecutor implements AgentExecutor {
-  private metrioClient: MetrioAIClient;
   private agentRegistry: AgentRegistryService;
   private taskStore: TaskStoreService;
   private activeTasks: Set<string> = new Set();
   private cancelledTasks: Set<string> = new Set();
 
   constructor(_config: CoordinatorConfig) {
-    this.metrioClient = new MetrioAIClient();
     this.agentRegistry = new AgentRegistryService();
     this.taskStore = new TaskStoreService();
 
@@ -116,8 +115,10 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     }
     contexts.set(contextId, historyForCoordination);
 
-    // 4. Extract user text from message
+    // 4. Extract user text and optional prompt overrides from message
     const userText = this.extractTextFromMessage(userMessage);
+    const promptOverrides = (userMessage.metadata as any)?.prompts;
+    const provider = (userMessage.metadata as any)?.provider as LLMProvider | undefined;
 
     if (!userText) {
       console.warn(
@@ -153,7 +154,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
         contextId,
         userText,
         eventBus,
-        historyForCoordination
+        historyForCoordination,
+        promptOverrides,
+        provider
       );
     } catch (error: any) {
       console.error(
@@ -192,7 +195,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     contextId: string,
     userText: string,
     eventBus: ExecutionEventBus,
-    historyForCoordination: Message[]
+    historyForCoordination: Message[],
+    promptOverrides?: any,
+    provider?: LLMProvider
   ): Promise<void> {
     try {
       console.log("🔄 開始 A2A 旅遊規劃協調...");
@@ -234,7 +239,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
         userText,
         taskId,
         contextId,
-        eventBus
+        eventBus,
+        promptOverrides,
+        provider
       );
 
       // 檢查是否被取消
@@ -254,7 +261,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
         agentResults,
         userText,
         eventBus,
-        historyForCoordination
+        historyForCoordination,
+        promptOverrides,
+        provider
       );
     } catch (error) {
       throw new Error(
@@ -295,7 +304,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
   }
 
   /**
-   * 處理最終結果 (使用 Metrio AI 整合)
+   * 處理最終結果
    */
   private async handleFinalResult(
     taskId: string,
@@ -303,7 +312,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     allResults: any,
     userText: string,
     eventBus: ExecutionEventBus,
-    historyForCoordination: Message[]
+    historyForCoordination: Message[],
+    promptOverrides?: any,
+    provider?: LLMProvider
   ): Promise<void> {
     console.log("🎉 協調完成，生成最終結果");
 
@@ -313,24 +324,17 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     const hasValidResults = this.hasValidAgentResults(allResults);
 
     if (hasValidResults) {
-      // 有有效結果，使用協調 AI 進行整合
+      // 有有效結果，使用 LLM 整合各 Agent 的回應
       try {
-        const integrationResult =
-          await this.metrioClient.getCoordinationGuidance(userText, allResults);
-
-        if (integrationResult.success && integrationResult.data?.response) {
-          summary = integrationResult.data.response;
-        } else {
-          summary = this.generateEnhancedSummary(allResults, userText);
-        }
+        summary = await this.integrateAgentResults(userText, allResults, promptOverrides?.coordinator, provider);
       } catch (coordinationError) {
         console.warn("協調整合失敗，使用增強型總結:", coordinationError);
         summary = this.generateEnhancedSummary(allResults, userText);
       }
     } else {
-      // 所有 Agent 都失敗，Coordinating Agent 直接回應
+      // 所有 Agent 都失敗，Coordinator 直接由 LLM 回應
       console.log("⚠️ 所有專家服務暫時無法使用，由協調專家直接提供建議");
-      summary = await this.generateDirectCoordinatorResponse(userText);
+      summary = await this.generateDirectCoordinatorResponse(userText, provider);
     }
 
     // 創建結果文件
@@ -467,29 +471,53 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
   }
 
   /**
-   * 當所有 Agent 都失敗時，協調專家直接提供回應
+   * 整合各 Agent 結果（使用 LLM）
+   */
+  private async integrateAgentResults(
+    userRequest: string,
+    allResults: any,
+    coordinatorOverride?: any,
+    provider?: LLMProvider
+  ): Promise<string> {
+    const { coordinator } = getPrompts();
+    const merged = { ...coordinator, ...coordinatorOverride };
+    const attractionsText =
+      allResults.attractions?.data?.response || "景點資料無法取得";
+    const accommodationText =
+      allResults.accommodation?.data?.response || "住宿資料無法取得";
+
+    const prompt = merged.integration
+      .replace("{request}", userRequest)
+      .replace("{attractions}", attractionsText)
+      .replace("{accommodation}", accommodationText);
+
+    const llmClient = createLLMClient(provider);
+    return await llmClient.complete(prompt, {
+      system: merged.system,
+      maxTokens: 2048,
+    });
+  }
+
+  /**
+   * 當所有 Agent 都失敗時，Coordinator 直接以 LLM 回應
    */
   private async generateDirectCoordinatorResponse(
-    userRequest: string
+    userRequest: string,
+    provider?: LLMProvider
   ): Promise<string> {
     console.log("🤖 協調專家正在直接處理請求...");
-
     try {
-      // 使用協調 Prompt 直接處理
-      const directResponse = await this.metrioClient.getCoordinationGuidance(
-        userRequest,
-        { note: "所有專家服務暫時無法使用，請直接提供旅遊建議" }
-      );
-
-      if (directResponse.success && directResponse.data?.response) {
-        return directResponse.data.response;
-      }
+      const { coordinator } = getPrompts();
+      const prompt = coordinator.fallback.replace("{request}", userRequest);
+      const llmClient = createLLMClient(provider);
+      return await llmClient.complete(prompt, {
+        system: coordinator.system,
+        maxTokens: 2048,
+      });
     } catch (error) {
-      console.warn("協調專家直接回應失敗:", error);
+      console.warn("LLM 直接回應失敗:", error);
+      return this.generateFallbackResponse(userRequest);
     }
-
-    // 最終備用方案
-    return this.generateFallbackResponse(userRequest);
   }
 
   /**
@@ -557,7 +585,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     userText: string,
     taskId: string,
     contextId: string,
-    eventBus: ExecutionEventBus
+    eventBus: ExecutionEventBus,
+    promptOverrides?: any,
+    provider?: LLMProvider
   ): Promise<Record<string, any>> {
     const agentResults: Record<string, any> = {};
     const AGENT_TIMEOUT = 15000; // 15秒超時
@@ -585,7 +615,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
           "景點推薦",
           userText,
           travelInfo,
-          AGENT_TIMEOUT
+          AGENT_TIMEOUT,
+          promptOverrides?.attractions,
+          provider
         ),
       });
       console.log("✅ 景點推薦 Agent 健康檢查通過");
@@ -606,7 +638,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
           "住宿規劃",
           userText,
           travelInfo,
-          AGENT_TIMEOUT
+          AGENT_TIMEOUT,
+          promptOverrides?.accommodation,
+          provider
         ),
       });
       console.log("✅ 住宿規劃 Agent 健康檢查通過");
@@ -672,260 +706,34 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
   }
 
   /**
-   * 呼叫單一 Agent 的輔助方法 (使用 A2A 協議)
+   * 呼叫單一 Agent（api 模式走直接 LLM，a2a 模式走 A2A JSON-RPC 2.0）
+   * 路由邏輯已封裝在 AgentRegistryService.callAgentAPI()
    */
   private async callSingleAgent(
     agentId: string,
     agentName: string,
     userText: string,
     travelInfo: any,
-    timeout: number
+    timeout: number,
+    promptOverride?: any,
+    provider?: LLMProvider
   ): Promise<any> {
     try {
-      console.log(`🔗 開始呼叫 ${agentName} 專家...`);
-
-      // 檢查 Agent 是否使用 A2A 協議
-      const agent = this.agentRegistry.getAgent(agentId);
-      if (!agent) {
-        throw new Error(`找不到代理: ${agentId}`);
-      }
-
-      if (agent.endpoint === "api") {
-        // Metrio AI API 直接調用 (非 A2A)
-        return await this.agentRegistry.callAgentAPI(
-          agentId,
-          "process_request",
-          {
-            request: userText,
-            ...travelInfo,
-          }
-        );
-      } else {
-        // 標準 A2A 協議流程
-        return await this.callA2AAgent(
-          agentId,
-          agentName,
-          userText,
-          travelInfo,
-          timeout
-        );
-      }
+      console.log(`🔗 呼叫 ${agentName}...`);
+      return await this.agentRegistry.callAgentAPI(
+        agentId,
+        "process_request",
+        { request: userText, ...travelInfo, promptOverride, provider },
+        timeout
+      );
     } catch (error) {
-      console.error(`❌ ${agentName} 專家呼叫失敗:`, error);
+      console.error(`❌ ${agentName} 呼叫失敗:`, error);
       throw new Error(
-        `${agentName}服務無法連接: ${
+        `${agentName} 無法連接: ${
           error instanceof Error ? error.message : "未知錯誤"
         }`
       );
     }
-  }
-
-  /**
-   * 使用標準 A2A 協議呼叫 Agent
-   */
-  private async callA2AAgent(
-    agentId: string,
-    agentName: string,
-    userText: string,
-    travelInfo: any,
-    timeout: number
-  ): Promise<any> {
-    const agent = this.agentRegistry.getAgent(agentId);
-    if (!agent) {
-      throw new Error(`找不到代理: ${agentId}`);
-    }
-
-    console.log(`📨 使用 A2A 協議呼叫 ${agentName}...`);
-
-    // 暫時使用 API 模式，未來可以實現完整的 A2A 協議
-    console.log(`⚠️ A2A 協議實現待完成，回退到 API 模式`);
-    return await this.agentRegistry.callAgentAPI(agentId, "process_request", {
-      request: userText,
-      ...travelInfo,
-    });
-  }
-
-  /**
-   * 創建備用結果
-   */
-  private createFallbackResults(agentConfigs: Array<{id: string, name: string}>): Record<string, any> {
-    const fallbackResults: Record<string, any> = {};
-    
-    agentConfigs.forEach(config => {
-      fallbackResults[config.id] = {
-        success: false,
-        error: `${config.name}服務目前無法使用`,
-        fallback: true
-      };
-    });
-    
-    return fallbackResults;
-  }
-
-  /**
-   * 格式化 Agent 請求
-   */
-  private formatAgentRequest(userText: string, travelInfo: any): string {
-    return `請根據以下旅遊需求提供建議：
-用戶需求：${userText}
-
-詳細參數：
-- 目的地：${travelInfo.destination}
-- 天數：${travelInfo.duration}天
-- 預算：${travelInfo.budget || '不限'}元
-- 人數：${travelInfo.traveler_count}人
-- 偏好：${travelInfo.preferences.join(', ') || '無特殊偏好'}`;
-  }
-
-  /**
-   * 發送 A2A 消息
-   */
-  private async sendA2AMessage(agent: any, request: any, timeout: number): Promise<any> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-    try {
-      const response = await fetch(`${agent.endpoint}/a2a`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "Travel-Coordinator-Agent/1.0",
-          ...(agent.apiKey && { "Authorization": `Bearer ${agent.apiKey}` })
-        },
-        body: JSON.stringify(request),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      clearTimeout(timeoutId);
-      throw error;
-    }
-  }
-
-  /**
-   * Polling A2A 任務完成狀態
-   */
-  private async pollA2ATaskCompletion(
-    agent: any,
-    taskId: string,
-    agentName: string,
-    timeout: number
-  ): Promise<any> {
-    const startTime = Date.now();
-    const pollInterval = 2000; // 2秒輪詢一次
-    let consecutiveErrors = 0;
-    const MAX_CONSECUTIVE_ERRORS = 3;
-
-    console.log(`🔄 開始輪詢 ${agentName} 任務狀態 (${taskId})...`);
-
-    while (Date.now() - startTime < timeout) {
-      try {
-        // 發送任務查詢請求
-        const getTaskRequest = {
-          jsonrpc: "2.0",
-          method: "task/get",
-          id: `get-task-${Date.now()}`,
-          params: { id: taskId }
-        };
-
-        const taskResponse = await this.sendA2AMessage(agent, getTaskRequest, 10000);
-
-        if (taskResponse.error) {
-          throw new Error(`任務查詢失敗: ${taskResponse.error.message}`);
-        }
-
-        const task = taskResponse.result;
-        const state = task.status?.state;
-
-        console.log(`📊 ${agentName} 任務狀態: ${state}`);
-        consecutiveErrors = 0; // 重置錯誤計數
-
-        switch (state) {
-          case "completed":
-            console.log(`✅ ${agentName} 任務完成`);
-            return this.extractA2ATaskResult(task, agentName);
-
-          case "failed":
-          case "canceled":
-            throw new Error(
-              `任務${state}: ${
-                task.status?.message?.parts?.[0]?.text || "未知原因"
-              }`
-            );
-
-          case "input-required":
-            console.log(`⚠️ ${agentName} 任務需要輸入，視為部分完成`);
-            return {
-              success: true,
-              data: {
-                response: task.status?.message?.parts?.[0]?.text || "需要更多輸入",
-                requiresInput: true,
-              },
-              api: agentName.toLowerCase(),
-              timestamp: new Date().toISOString(),
-            };
-
-          case "working":
-          case "submitted":
-            const remainingTime = Math.round((timeout - (Date.now() - startTime)) / 1000);
-            if (remainingTime > 0) {
-              console.log(`⏳ ${agentName} 任務進行中，${remainingTime}秒後超時`);
-            }
-            break;
-
-          default:
-            console.warn(`🤔 ${agentName} 未知任務狀態: ${state}`);
-        }
-
-        // 等待下次輪詢
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
-      } catch (error) {
-        consecutiveErrors++;
-        console.error(`❌ ${agentName} 任務查詢錯誤 (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, error);
-        
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          throw new Error(`${agentName} 連續查詢失敗 ${MAX_CONSECUTIVE_ERRORS} 次`);
-        }
-        
-        // 等待後重試
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
-      }
-    }
-
-    throw new Error(`${agentName} 任務超時 (${timeout}ms)`);
-  }
-
-  /**
-   * 提取 A2A 任務結果
-   */
-  private extractA2ATaskResult(task: any, agentName: string): any {
-    let responseText = task.status?.message?.parts?.[0]?.text || "任務完成";
-
-    // 如果有 artifacts，也包含進來
-    if (task.artifacts && task.artifacts.length > 0) {
-      const artifactContent = task.artifacts[0].parts?.[0]?.text;
-      if (artifactContent) {
-        responseText += `\n\n${artifactContent}`;
-      }
-    }
-
-    return {
-      success: true,
-      data: { 
-        response: responseText,
-        task: task,
-        artifacts: task.artifacts || []
-      },
-      api: agentName.toLowerCase(),
-      timestamp: new Date().toISOString(),
-    };
   }
 
   /**

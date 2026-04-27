@@ -1,31 +1,27 @@
 import { AgentRegistry, AgentAPIResponse } from "../types/index.js";
-import { MetrioAIClient } from "./metrioClient.js";
+import { createLLMClient, LLMClient, LLMProvider } from "./llmClient.js";
 
 export class AgentRegistryService {
   private agents: Map<string, AgentRegistry> = new Map();
-  private metrioClient: MetrioAIClient;
 
   constructor() {
-    this.metrioClient = new MetrioAIClient();
     this.registerDefaultAgents();
   }
 
   /**
-   * 註冊默認的旅遊代理 (使用 Metrio AI API)
+   * 註冊默認的旅遊代理
+   * 支援 API 和 A2A 兩種模式（透過環境變數切換）
    */
   private registerDefaultAgents(): void {
-    // 註冊可用的代理服務
-    // 支援 API 和 A2A 兩種模式
-
     // 景點推薦代理
-    // 環境變數控制使用模式：ATTRACTIONS_MODE=a2a 啟用 A2A 協議
+    // ATTRACTIONS_MODE=a2a 啟用真實 A2A 協議；預設使用 API 模式（直接 LLM）
     this.registerAgent({
       id: "attractions",
       name: "Attractions Recommendation Agent",
       endpoint:
         process.env.ATTRACTIONS_MODE === "a2a"
           ? process.env.ATTRACTIONS_AGENT_URL || "http://localhost:3001"
-          : "api", // 預設使用 API 模式
+          : "api",
       description: "提供景點和美食推薦服務",
       capabilities: ["attractions", "restaurants", "activities"],
     });
@@ -37,9 +33,7 @@ export class AgentRegistryService {
     );
     console.log(
       `   模式: ${
-        this.getAgent("attractions")?.endpoint === "api"
-          ? "Metrio AI API"
-          : "A2A 協議"
+        this.getAgent("attractions")?.endpoint === "api" ? "LLM API" : "A2A 協議"
       }`
     );
 
@@ -50,7 +44,7 @@ export class AgentRegistryService {
       endpoint:
         process.env.ACCOMMODATION_MODE === "a2a"
           ? process.env.ACCOMMODATION_AGENT_URL || "http://localhost:3002"
-          : "api", // 預設使用 API 模式
+          : "api",
       description: "提供住宿和交通安排服務",
       capabilities: ["hotels", "transportation", "bookings"],
     });
@@ -63,7 +57,7 @@ export class AgentRegistryService {
     console.log(
       `   模式: ${
         this.getAgent("accommodation")?.endpoint === "api"
-          ? "Metrio AI API"
+          ? "LLM API"
           : "A2A 協議"
       }`
     );
@@ -108,7 +102,7 @@ export class AgentRegistryService {
   }
 
   /**
-   * 呼叫代理 API (整合 Metrio AI)
+   * 呼叫代理 API
    */
   async callAgentAPI(
     agentId: string,
@@ -131,12 +125,9 @@ export class AgentRegistryService {
     console.log(`🔗 呼叫代理: ${agent.name} (${action})`);
 
     try {
-      // 根據端點類型決定調用方式
       if (agent.endpoint === "api") {
-        // 使用 Metrio AI API 調用
-        return await this.callMetrioAgent(agentId, action, data);
+        return await this.callLLMAgent(agentId, action, data);
       } else {
-        // 使用 A2A 標準協議進行通信
         return await this.callA2AAgent(agent, action, data, timeout);
       }
     } catch (error) {
@@ -153,156 +144,105 @@ export class AgentRegistryService {
   }
 
   /**
-   * 呼叫 Metrio AI 代理
+   * 組合 A2A message/send endpoint URL（移除尾部斜線後附加路徑）
    */
-  private async callMetrioAgent(
+  private buildA2AUrl(endpoint: string): string {
+    return endpoint.replace(/\/$/, "") + "/message/send";
+  }
+
+  /**
+   * 以 Anthropic Claude 直接處理請求（API 模式，無獨立 sub-agent process）
+   */
+  private async callLLMAgent(
     agentId: string,
     action: string,
     data: any
   ): Promise<AgentAPIResponse> {
-    console.log(`🔗 呼叫 Metrio AI 代理: ${agentId} (${action})`);
+    console.log(`🔗 以 LLM 直接回應: ${agentId} (${action})`);
 
     try {
       if (agentId === "attractions") {
-        return await this.callAttractionsAPI(action, data);
+        return await this.callAttractionsLLM(data);
       } else if (agentId === "accommodation") {
-        return await this.callAccommodationAPI(action, data);
+        return await this.callAccommodationLLM(data);
       } else {
-        throw new Error(`不支援的 Metrio AI 代理: ${agentId}`);
+        throw new Error(`不支援的 LLM 代理: ${agentId}`);
       }
     } catch (error) {
-      console.error(`❌ Metrio AI 代理 ${agentId} 呼叫失敗:`, error);
+      console.error(`❌ LLM 代理 ${agentId} 呼叫失敗:`, error);
       throw error;
     }
   }
 
   /**
-   * 呼叫景點推薦 API (Metrio AI)
+   * 景點推薦（LLM 直接回應）
    */
-  private async callAttractionsAPI(
-    action: string,
-    data: any
-  ): Promise<AgentAPIResponse> {
-    // 從用戶請求中提取結構化資訊
+  private async callAttractionsLLM(data: any): Promise<AgentAPIResponse> {
     const travelInfo = this.extractTravelInfo(data.request || "");
 
-    return await this.metrioClient.getAttractionRecommendations(
-      travelInfo.destination,
-      travelInfo.preferences,
-      travelInfo.budget,
-      travelInfo.duration,
-      travelInfo.travelers
-    );
+    const prompt = `你是一位專業的旅遊景點顧問。請根據以下資訊推薦景點和美食：
+- 目的地：${travelInfo.destination}
+- 天數：${travelInfo.duration}天
+- 預算：${travelInfo.budget ? `${travelInfo.budget}元` : "不限"}
+- 偏好：${travelInfo.preferences.length > 0 ? travelInfo.preferences.join(", ") : "無特殊偏好"}
+- 人數：${travelInfo.travelers}人
+
+請提供：
+1. 每天推薦的景點和美食（依天數規劃）
+2. 各景點的特色說明和建議停留時間
+3. 實用旅遊建議
+
+請用繁體中文回答，格式清晰易讀。`;
+
+    const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
+    const response = await llmClient.complete(prompt, {
+      system: "你是一位專業的旅遊規劃師，擅長為旅客規劃客製化的旅遊行程。",
+      maxTokens: 1500,
+    });
+
+    return {
+      success: true,
+      data: { response },
+      api: "attractions",
+      action: "recommend_attractions",
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**
-   * 呼叫住宿與交通 API (Metrio AI)
+   * 住宿規劃（LLM 直接回應）
    */
-  private async callAccommodationAPI(
-    action: string,
-    data: any
-  ): Promise<AgentAPIResponse> {
-    // 從用戶請求中提取結構化資訊
+  private async callAccommodationLLM(data: any): Promise<AgentAPIResponse> {
     const travelInfo = this.extractTravelInfo(data.request || "");
+    const attractionList: string[] = data.attractionList || [];
 
-    // 如果有景點資訊，從 data 中提取
-    const attractionList = data.attractionList || [];
+    const prompt = `你是一位專業的住宿和交通規劃顧問。請根據以下資訊推薦住宿和交通方案：
+- 目的地：${travelInfo.destination}
+- 天數：${travelInfo.duration}天
+- 預算：${travelInfo.budget ? `${travelInfo.budget}元` : "不限"}
+- 人數：${travelInfo.travelers}人
+- 已規劃景點：${attractionList.length > 0 ? attractionList.join(", ") : "待確認"}
 
-    return await this.metrioClient.getAccommodationAndTransport(
-      travelInfo.destination,
-      travelInfo.duration,
-      travelInfo.budget,
-      travelInfo.travelers,
-      attractionList
-    );
-  }
+請提供：
+1. 推薦住宿選項（含價格區間、位置優勢）
+2. 各天的交通建議（大眾運輸 / 租車 / 計程車）
+3. 住宿訂房注意事項
 
-  /**
-   * 呼叫預算分析 API (內建計算)
-   */
-  private async callBudgetAPI(
-    action: string,
-    data: any
-  ): Promise<AgentAPIResponse> {
-    const { request = "" } = data;
+請用繁體中文回答，格式清晰易讀。`;
 
-    try {
-      // 從用戶請求中提取資訊
-      const travelInfo = this.extractTravelInfo(request);
+    const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
+    const response = await llmClient.complete(prompt, {
+      system: "你是一位專業的旅遊規劃師，擅長為旅客安排住宿和交通。",
+      maxTokens: 1500,
+    });
 
-      // 根據目的地調整基礎費用
-      const baseCosts = this.getBaseCostsByDestination(travelInfo.destination);
-
-      // 計算各項費用
-      const totalFood = baseCosts.daily_food * travelInfo.duration;
-      const totalAttractions =
-        baseCosts.attractions_per_day * travelInfo.duration;
-      const totalTransportation =
-        baseCosts.transportation_daily * travelInfo.duration;
-      const totalAccommodation =
-        baseCosts.accommodation_per_night *
-        Math.max(0, travelInfo.duration - 1);
-
-      const subtotal =
-        totalFood + totalAttractions + totalTransportation + totalAccommodation;
-
-      // 根據旅客人數和偏好調整
-      const adjustmentFactor = this.calculateAdjustmentFactor(travelInfo);
-      const totalBudget = Math.round(subtotal * adjustmentFactor);
-
-      const budgetBreakdown = {
-        destination: travelInfo.destination,
-        duration: `${travelInfo.duration} 天`,
-        travelers: travelInfo.travelers,
-        breakdown: {
-          food: {
-            amount: Math.round(totalFood * adjustmentFactor),
-            description: `餐費 (${baseCosts.daily_food}/天/人)`,
-          },
-          attractions: {
-            amount: Math.round(totalAttractions * adjustmentFactor),
-            description: `景點門票 (${baseCosts.attractions_per_day}/天)`,
-          },
-          transportation: {
-            amount: Math.round(totalTransportation * adjustmentFactor),
-            description: `交通費 (${baseCosts.transportation_daily}/天)`,
-          },
-          accommodation: {
-            amount: Math.round(totalAccommodation * adjustmentFactor),
-            description: `住宿費 (${baseCosts.accommodation_per_night}/晚)`,
-          },
-        },
-        total: totalBudget,
-        currency: "TWD",
-        recommendations: this.generateBudgetRecommendations(
-          travelInfo,
-          totalBudget
-        ),
-      };
-
-      return {
-        success: true,
-        data: {
-          budget_analysis: budgetBreakdown,
-          summary: `${travelInfo.destination} ${
-            travelInfo.duration
-          }天旅遊預估總預算：${totalBudget.toLocaleString()} 元 (${
-            travelInfo.travelers
-          }人)`,
-        },
-        api: "budget",
-        action,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "預算計算失敗",
-        api: "budget",
-        action,
-        timestamp: new Date().toISOString(),
-      };
-    }
+    return {
+      success: true,
+      data: { response },
+      api: "accommodation",
+      action: "recommend_accommodation",
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**
@@ -345,7 +285,7 @@ export class AgentRegistryService {
   private extractTravelers(request: string): number {
     const match =
       request.match(/(\d+)\s*人/) || request.match(/帶\s*(\d+)\s*個/);
-    return match ? parseInt(match[1]) + 1 : 1; // +1 for the person asking
+    return match ? parseInt(match[1]) + 1 : 1;
   }
 
   private extractBudget(request: string): number | null {
@@ -368,90 +308,7 @@ export class AgentRegistryService {
   }
 
   /**
-   * 根據目的地獲取基礎費用
-   */
-  private getBaseCostsByDestination(destination: string): any {
-    const baseCosts: Record<string, any> = {
-      台北: {
-        daily_food: 1000,
-        attractions_per_day: 600,
-        transportation_daily: 300,
-        accommodation_per_night: 2500,
-      },
-      高雄: {
-        daily_food: 800,
-        attractions_per_day: 500,
-        transportation_daily: 200,
-        accommodation_per_night: 2000,
-      },
-      台中: {
-        daily_food: 850,
-        attractions_per_day: 450,
-        transportation_daily: 250,
-        accommodation_per_night: 2200,
-      },
-      default: {
-        daily_food: 800,
-        attractions_per_day: 500,
-        transportation_daily: 200,
-        accommodation_per_night: 2000,
-      },
-    };
-
-    return baseCosts[destination] || baseCosts["default"];
-  }
-
-  /**
-   * 計算調整因子
-   */
-  private calculateAdjustmentFactor(travelInfo: any): number {
-    let factor = 1.0;
-
-    // 根據旅客人數調整
-    if (travelInfo.travelers > 1) {
-      factor *= 1 + (travelInfo.travelers - 1) * 0.7; // 人數越多，人均成本降低
-    }
-
-    // 根據偏好調整
-    if (travelInfo.preferences.includes("美食")) factor *= 1.2;
-    if (travelInfo.preferences.includes("購物")) factor *= 1.15;
-    if (travelInfo.preferences.includes("親子")) factor *= 1.1;
-
-    return factor;
-  }
-
-  /**
-   * 生成預算建議
-   */
-  private generateBudgetRecommendations(
-    travelInfo: any,
-    totalBudget: number
-  ): string[] {
-    const recommendations = ["建議預留 10-20% 的額外預算作為緊急使用"];
-
-    if (travelInfo.budget && totalBudget > travelInfo.budget) {
-      recommendations.push(
-        `預估費用 ${totalBudget.toLocaleString()} 元超過您的預算 ${travelInfo.budget.toLocaleString()} 元，建議調整行程`
-      );
-    }
-
-    if (travelInfo.travelers > 2) {
-      recommendations.push("多人旅遊建議選擇家庭房或民宿，可節省住宿費用");
-    }
-
-    if (travelInfo.destination === "台北") {
-      recommendations.push("台北捷運一日券 150 元，可節省交通費");
-    }
-
-    if (travelInfo.preferences.includes("美食")) {
-      recommendations.push("夜市美食性價比高，建議安排 1-2 天夜市行程");
-    }
-
-    return recommendations;
-  }
-
-  /**
-   * 呼叫 A2A Agent (使用 JSON-RPC 2.0 協議)
+   * 呼叫 A2A Agent（JSON-RPC 2.0 協議）
    */
   private async callA2AAgent(
     agent: AgentRegistry,
@@ -459,7 +316,6 @@ export class AgentRegistryService {
     data: any,
     timeout: number
   ): Promise<AgentAPIResponse> {
-    // 建立 A2A 標準的 JSON-RPC 請求
     const jsonRpcRequest = {
       jsonrpc: "2.0",
       method: "message/send",
@@ -471,19 +327,21 @@ export class AgentRegistryService {
           parts: [
             {
               kind: "text",
-              text: JSON.stringify({
-                action: action,
-                data: data,
-                coordinator_id: "travel_coordinator_agent",
-              }),
+              text: data.request || JSON.stringify(data),
             },
           ],
+          // prompt override 和 provider 透過 metadata 傳遞給 sub-agent
+          ...((data.promptOverride || data.provider) && {
+            metadata: {
+              ...(data.promptOverride && { promptOverride: data.promptOverride }),
+              ...(data.provider && { provider: data.provider }),
+            },
+          }),
           kind: "message",
         },
       },
     };
 
-    // 準備請求標頭
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "User-Agent": "A2A-Travel-Coordinator/1.0",
@@ -493,15 +351,14 @@ export class AgentRegistryService {
       headers["Authorization"] = `Bearer ${agent.apiKey}`;
     }
 
-    // 建立 AbortController 用於超時控制
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     try {
-      console.log(`📡 發送 A2A 請求到 ${agent.endpoint}`);
+      const url = this.buildA2AUrl(agent.endpoint);
+      console.log(`📡 發送 A2A 請求到 ${url}`);
 
-      // 呼叫 A2A Agent
-      const response = await fetch(agent.endpoint, {
+      const response = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(jsonRpcRequest),
@@ -516,16 +373,24 @@ export class AgentRegistryService {
 
       const result = (await response.json()) as any;
 
-      // 檢查 JSON-RPC 回應
       if (result.error) {
         throw new Error(`A2A Error: ${result.error.message}`);
       }
 
       console.log(`✅ A2A 代理 ${agent.name} 回應成功`);
 
+      // 從 Task artifacts 提取文字回應
+      const task = result.result;
+      let responseText = "";
+      if (task?.artifacts?.[0]?.parts?.[0]?.text) {
+        responseText = task.artifacts[0].parts[0].text;
+      } else if (task?.status?.message?.parts?.[0]?.text) {
+        responseText = task.status.message.parts[0].text;
+      }
+
       return {
         success: true,
-        data: result.result,
+        data: { response: responseText, task },
         api: agent.id,
         action,
         timestamp: new Date().toISOString(),
@@ -574,17 +439,36 @@ export class AgentRegistryService {
 
   /**
    * 檢查代理健康狀態
+   * - API 模式：嘗試一次輕量 LLM 呼叫確認 Anthropic 連線正常
+   * - A2A 模式：呼叫 sub-agent 的 GET /health
    */
   async checkAgentHealth(agentId: string): Promise<boolean> {
-    try {
-      // 對於 Metrio AI 代理，使用專門的健康檢查
-      if (agentId === "attractions" || agentId === "accommodation") {
-        return await this.metrioClient.healthCheckForAgent(agentId);
-      }
+    const agent = this.getAgent(agentId);
+    if (!agent) return false;
 
-      // 對於其他代理，使用一般的 API 呼叫
-      const result = await this.callAgentAPI(agentId, "health_check", {}, 5000);
-      return result.success;
+    try {
+      if (agent.endpoint === "api") {
+        // API 模式：驗證對應的 API key 存在即可（不打真實 API 節省費用）
+        const provider = process.env.LLM_PROVIDER || "anthropic";
+        const hasKey = provider === "gemini"
+          ? !!process.env.GEMINI_API_KEY
+          : !!process.env.ANTHROPIC_API_KEY;
+        return hasKey;
+      } else {
+        // A2A 模式：呼叫 sub-agent /health endpoint
+        const healthUrl = `${agent.endpoint}/health`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        try {
+          const response = await fetch(healthUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          return response.ok;
+        } catch {
+          clearTimeout(timeoutId);
+          return false;
+        }
+      }
     } catch (error) {
       console.warn(`代理 ${agentId} 健康檢查失敗:`, error);
       return false;

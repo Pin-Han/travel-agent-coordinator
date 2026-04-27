@@ -6,10 +6,9 @@
     "gemini",
     "taiwanese",
     "tsconfig",
-    "metrio",
-    "Metrio",
-    "METRIO",
-    "HTTPAPI"
+    "HTTPAPI",
+    "anthropic",
+    "Anthropic"
   ],
   "ignorePaths": [
     "node_modules/**",

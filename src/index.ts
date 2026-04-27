@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import express from "express";
+import cors from "cors";
 import {
   InMemoryTaskStore,
   TaskStore,
@@ -12,15 +13,18 @@ import type { AgentCard } from "@a2a-js/sdk";
 import { TravelCoordinatorExecutor } from "./agents/coordinatorExecutor.js";
 import { generateAgentCard } from "./utils/agentCard.js";
 import { CoordinatorConfig } from "./types/index.js";
+import { getPrompts, savePrompts } from "./services/promptStore.js";
 
 // 載入環境變數
 dotenv.config();
 
 // 驗證必要的環境變數
 function validateEnvironment(): CoordinatorConfig {
-  const metrioApiKey = process.env.METRIO_AI_API_KEY;
-  if (!metrioApiKey) {
-    throw new Error("METRIO_AI_API_KEY 環境變數是必須的");
+  const provider = process.env.LLM_PROVIDER || "anthropic";
+  if (provider === "gemini" && !process.env.GEMINI_API_KEY) {
+    console.warn("⚠️  LLM_PROVIDER=gemini 但 GEMINI_API_KEY 未設定，請求時會失敗");
+  } else if (provider !== "gemini" && !process.env.ANTHROPIC_API_KEY) {
+    console.warn("⚠️  ANTHROPIC_API_KEY 未設定，請求時會失敗（或在設定頁面切換為 Gemini）");
   }
 
   return {
@@ -54,7 +58,24 @@ async function main() {
 
   // 4. Create and setup A2AExpressApp
   const appBuilder = new A2AExpressApp(requestHandler);
-  const expressApp = appBuilder.setupRoutes(express());
+  const baseApp = express();
+  baseApp.use(cors());
+  baseApp.use(express.json());
+  const expressApp = appBuilder.setupRoutes(baseApp);
+
+  // Prompt 管理 API（供前端 Settings 頁面使用）
+  expressApp.get("/api/prompts", (_req, res) => {
+    res.json(getPrompts());
+  });
+
+  expressApp.put("/api/prompts", (req, res) => {
+    try {
+      savePrompts(req.body);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // 5. Start the server
   const PORT = config.port;
