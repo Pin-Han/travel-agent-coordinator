@@ -1,124 +1,172 @@
 # Travel Agent Coordinator
 
-> A multi-agent travel planning system built on Google's A2A Protocol —
-> demonstrating how independent AI agents discover and collaborate with each other.
+A multi-agent travel planning system built on [Google's A2A Protocol](https://google.github.io/A2A/) — demonstrating how independent AI agents discover, communicate, and collaborate via JSON-RPC 2.0.
 
-## 🌟 功能特色
-
-- **🤖 多代理協調**: 整合景點推薦、住宿規劃代理
-- **📡 A2A 協議**: 完全符合 Agent-to-Agent (JSON-RPC 2.0) 通信標準
-- **🔌 雙模式支援**: API 模式（直接 LLM）或 A2A 模式（獨立 sub-agent process）
-- **🎯 實時協調**: 支援串流更新和任務狀態追蹤
-- **🛡️ Graceful Degradation**: Sub-agent 失敗時自動降級，回傳 partial result
-
-## 🏗️ 架構概述
+## Architecture
 
 ```
-使用者請求
-    ↓
+User (React Web UI :5173)
+        │  A2A JSON-RPC 2.0
+        ▼
 Coordinator Agent (:3000)
-  ├── [A2A 模式] → Attractions Agent (:3001)
-  └── [A2A 模式] → Accommodation Agent (:3002)
-
-每個 Sub-agent 有自己的:
-  ├── /.well-known/agent-card.json  (A2A 發現機制)
-  ├── POST /message/send            (接受 A2A 任務)
-  └── GET /health                   (健康檢查)
+  ├── Parses intent & splits tasks
+  ├── Calls sub-agents in parallel
+  ├── Synthesizes results with LLM
+  └── Graceful degradation when sub-agents fail
+        │
+        ├── [A2A Protocol] ──▶ Attractions Agent (:3001)
+        │                        └── /.well-known/agent-card.json
+        │                        └── POST /message/send
+        │                        └── GET  /health
+        │
+        └── [A2A Protocol] ──▶ Accommodation Agent (:3002)
+                                 └── /.well-known/agent-card.json
+                                 └── POST /message/send
+                                 └── GET  /health
 ```
 
-## 🚀 快速開始
+### Dual-mode operation
 
-### 1. 安裝依賴
+Each sub-agent supports two modes, switchable via environment variable:
+
+| Mode | How it works | When to use |
+|------|-------------|-------------|
+| `api` (default) | Coordinator calls LLM directly — no separate process needed | Local dev, quick testing |
+| `a2a` | Each agent runs as an independent process; Coordinator sends real A2A JSON-RPC 2.0 requests | Demo, showcasing the full protocol |
+
+## Features
+
+- **A2A Protocol** — Agents expose `/.well-known/agent-card.json` for capability discovery; communication follows the A2A JSON-RPC 2.0 spec
+- **Multi-provider LLM** — Switch between Anthropic (Claude) and Google (Gemini) from the UI; provider is passed as request metadata, no server restart needed
+- **Configurable prompts** — Edit system/user prompts for each agent in the Settings page; stored in `localStorage`, applied on every request
+- **Graceful degradation** — If a sub-agent is unavailable, the Coordinator falls back to a direct LLM response instead of failing
+- **Web UI** — React + Vite chat interface with real-time status and a prompt/provider settings page
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- An API key for Anthropic or Gemini (at least one)
+
+### 1. Install dependencies
 
 ```bash
 npm install
+cd web && npm install && cd ..
 ```
 
-### 2. 設置環境變數
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
-# 編輯 .env，填入 ANTHROPIC_API_KEY
 ```
 
-### 3. 建置並啟動
+Edit `.env` and fill in your key:
+
+```env
+# Pick one (or both)
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
+
+# Set which provider to use by default (anthropic | gemini)
+LLM_PROVIDER=anthropic
+```
+
+### 3. Start
 
 ```bash
-npm run build
-npm start
+# Start everything: coordinator + both sub-agents + web UI
+npm run dev:all
 
-# 或開發模式
-npm run dev
+# Backend only (no web UI)
+npm run dev:agents
+
+# Kill all ports if something is stuck
+npm run kill-ports
 ```
 
-服務將在 `http://localhost:3000` 啟動。
+Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-## 📋 API 端點
+## Running in A2A mode
 
-- `GET /.well-known/agent-card.json` - A2A Agent 發現
-- `POST /message/send` - 發送訊息（同步）
-- `POST /message/stream` - 串流訊息（SSE）
-- `POST /tasks/get` - 查詢任務狀態
-- `POST /tasks/cancel` - 取消任務
-- `GET /health` - 健康檢查
+To exercise the real A2A protocol (each agent as a separate process):
 
-## 💬 使用範例
-
-### 基本旅遊規劃
-
-```bash
-curl -X POST http://localhost:3000/message/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "message/send",
-    "id": "test-001",
-    "params": {
-      "message": {
-        "messageId": "msg-001",
-        "role": "user",
-        "parts": [{ "kind": "text", "text": "請幫我規劃台北3天旅遊，預算30000元，喜歡文化古蹟和美食" }],
-        "kind": "message"
-      }
-    }
-  }'
+```env
+ATTRACTIONS_MODE=a2a
+ACCOMMODATION_MODE=a2a
 ```
 
-## 🔧 開發指南
+Then `npm run dev:all` will start all three backend processes. The Coordinator will discover and call sub-agents via JSON-RPC 2.0 over HTTP.
 
-### 專案結構
+## Project Structure
 
 ```
 src/
 ├── agents/
-│   └── coordinatorExecutor.ts  # Coordinator 邏輯
+│   ├── coordinatorExecutor.ts   # Orchestration logic
+│   ├── attractionsAgent.ts      # Attractions AgentExecutor
+│   └── accommodationAgent.ts    # Accommodation AgentExecutor
+├── servers/
+│   ├── attractionsServer.ts     # Express server :3001
+│   └── accommodationServer.ts   # Express server :3002
 ├── services/
-│   ├── llmClient.ts            # Anthropic SDK 抽象層
-│   ├── agentRegistry.ts        # Agent 註冊與呼叫管理
-│   └── taskStore.ts            # 任務狀態存儲
-├── types/                      # TypeScript 類型定義
+│   ├── llmClient.ts             # AnthropicClient / GeminiClient / factory
+│   ├── agentRegistry.ts         # Agent registration, health checks, A2A calls
+│   ├── promptStore.ts           # config/prompts.json read/write
+│   └── taskStore.ts             # In-memory task state
+├── types/
 ├── utils/
-│   └── agentCard.ts            # A2A Agent Card 產生
-└── index.ts                    # 主程式入口
+│   └── agentCard.ts
+└── index.ts                     # Coordinator entry point
+
+web/
+├── src/
+│   ├── pages/
+│   │   ├── ChatPage.tsx         # Conversation UI
+│   │   └── SettingsPage.tsx     # Prompt editor + provider selector
+│   └── App.tsx
+└── vite.config.ts               # Proxies /api and /message to :3000
+
+config/
+└── prompts.json                 # Default prompts for all agents
 ```
 
-### 環境設定
+## Environment Variables
 
-| 變數 | 說明 | 必填 |
-|------|------|------|
-| `ANTHROPIC_API_KEY` | Anthropic API 金鑰 | ✅ |
-| `ANTHROPIC_MODEL` | 使用的模型（預設 claude-haiku-4-5-20251001） | — |
-| `ATTRACTIONS_MODE` | `api` 或 `a2a`（預設 `api`） | — |
-| `ACCOMMODATION_MODE` | `api` 或 `a2a`（預設 `api`） | — |
-| `ATTRACTIONS_AGENT_URL` | A2A 模式下 Attractions Agent URL | — |
-| `ACCOMMODATION_AGENT_URL` | A2A 模式下 Accommodation Agent URL | — |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LLM_PROVIDER` | `anthropic` or `gemini` | `anthropic` |
+| `ANTHROPIC_API_KEY` | Anthropic API key | — |
+| `ANTHROPIC_MODEL` | Claude model ID | `claude-haiku-4-5-20251001` |
+| `GEMINI_API_KEY` | Google Gemini API key | — |
+| `GEMINI_MODEL` | Gemini model ID | `gemini-2.0-flash` |
+| `ATTRACTIONS_MODE` | `api` or `a2a` | `api` |
+| `ACCOMMODATION_MODE` | `api` or `a2a` | `api` |
+| `ATTRACTIONS_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3001` |
+| `ACCOMMODATION_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3002` |
+| `PORT` | Coordinator port | `3000` |
 
-## 📝 授權
+## API Endpoints (Coordinator)
 
-此專案採用 Apache 2.0 授權。
+| Endpoint | Description |
+|----------|-------------|
+| `GET  /.well-known/agent-card.json` | A2A agent discovery |
+| `POST /message/send` | Send a message (synchronous) |
+| `GET  /api/prompts` | Get current prompt configuration |
+| `PUT  /api/prompts` | Update prompt configuration |
 
-## 🔗 相關資源
+## Roadmap
 
-- [A2A Protocol Spec](https://github.com/a2aproject/a2a-js)
-- [Anthropic API](https://docs.anthropic.com/)
-- [Google A2A Protocol](https://google.github.io/A2A/)
+- [x] Phase 0 — Replace internal SDK with Anthropic SDK; build LLM abstraction layer
+- [x] Phase 1 — Real A2A sub-agents with agent-card and health endpoints
+- [x] Phase 1.5 — React web UI (chat + settings)
+- [x] Phase 1.6 — Multi-provider LLM support (Anthropic + Gemini)
+- [ ] Phase 2 — MCP tool integration (Tavily Search, Google Calendar)
+- [ ] Phase 3 — SSE streaming for real-time agent progress
+- [ ] Phase 4 — Retry logic and cost tracking
+- [ ] Phase 5 — Demo polish (architecture diagram, demo GIF)
+
+## License
+
+Apache 2.0
