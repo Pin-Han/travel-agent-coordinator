@@ -55,6 +55,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [memoryClearing, setMemoryClearing] = useState(false);
+  const [memoryCleared, setMemoryCleared] = useState(false);
 
   useEffect(() => {
     // Load LLM config from localStorage
@@ -90,6 +92,19 @@ export default function SettingsPage() {
   function handleChange(agent: keyof Prompts, field: string, value: string) {
     if (!prompts) return;
     setPrompts({ ...prompts, [agent]: { ...prompts[agent], [field]: value } });
+  }
+
+  async function handleClearMemory() {
+    setMemoryClearing(true);
+    try {
+      await fetch("/api/memory", { method: "DELETE" });
+      setMemoryCleared(true);
+      setTimeout(() => setMemoryCleared(false), 3000);
+    } catch {
+      setError("Failed to clear memory. Make sure the Coordinator server is running.");
+    } finally {
+      setMemoryClearing(false);
+    }
   }
 
   function handleSave() {
@@ -186,6 +201,25 @@ export default function SettingsPage() {
               file (<code className="font-mono bg-gray-100 px-1 rounded">ANTHROPIC_API_KEY</code> or{" "}
               <code className="font-mono bg-gray-100 px-1 rounded">GEMINI_API_KEY</code>).
             </p>
+          </div>
+        </section>
+
+        {/* Memory Section */}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b bg-gray-50">
+            <h3 className="font-semibold text-gray-800">🧠 Memory</h3>
+          </div>
+          <div className="p-5 space-y-3">
+            <p className="text-sm text-gray-600">
+              The assistant remembers your travel preferences across conversations — destinations visited, travel style, budget habits, and more.
+            </p>
+            <button
+              onClick={handleClearMemory}
+              disabled={memoryClearing}
+              className="bg-red-50 hover:bg-red-100 disabled:bg-gray-50 border border-red-200 disabled:border-gray-200 text-red-700 disabled:text-gray-400 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              {memoryClearing ? "Clearing..." : memoryCleared ? "✓ Memory cleared" : "Clear my memory"}
+            </button>
           </div>
         </section>
 

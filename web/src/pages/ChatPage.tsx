@@ -7,11 +7,16 @@ interface Message {
   text: string;
   timestamp: string;
   tokenUsage?: { input: number; output: number };
+  durationMs?: number;
 }
 
-interface ProgressStep {
-  text: string;
-  done: boolean;
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  userInput: string;
+  durationMs: number;
+  steps: { text: string; timestamp: string }[];
+  tokenUsage?: { input: number; output: number };
 }
 
 const WELCOME: Message = {
@@ -22,7 +27,9 @@ const WELCOME: Message = {
 };
 
 const STORAGE_KEY = "chat-history";
+const LOGS_KEY = "agent-logs";
 const MAX_MESSAGES = 100;
+const MAX_LOGS = 50;
 
 function loadHistory(): Message[] {
   try {
@@ -33,6 +40,15 @@ function loadHistory(): Message[] {
     }
   } catch {}
   return [WELCOME];
+}
+
+function saveLogEntry(entry: LogEntry) {
+  try {
+    const raw = localStorage.getItem(LOGS_KEY);
+    const logs: LogEntry[] = raw ? JSON.parse(raw) : [];
+    const updated = [entry, ...logs].slice(0, MAX_LOGS);
+    localStorage.setItem(LOGS_KEY, JSON.stringify(updated));
+  } catch {}
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -70,57 +86,44 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function ProgressIndicator({ steps, currentStatus }: { steps: ProgressStep[]; currentStatus: string }) {
+function ProgressIndicator({ status }: { status: string }) {
   return (
     <div className="flex justify-start">
       <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center mr-2 mt-1 shrink-0">
         AI
       </div>
-      <div className="bg-white border border-blue-100 rounded-2xl rounded-tl-sm px-4 py-3 text-sm shadow-sm max-w-[75%]">
-        <div className="flex items-center gap-2 text-blue-600 font-medium mb-2">
-          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+      <div className="bg-white border border-blue-100 rounded-2xl rounded-tl-sm px-4 py-3 text-sm shadow-sm">
+        <div className="flex items-center gap-2 text-blue-600">
+          <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
-          Planning your trip...
-        </div>
-        <div className="space-y-1">
-          {steps.map((step, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs text-gray-600">
-              {step.done ? (
-                <svg className="w-3.5 h-3.5 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                </svg>
-              ) : (
-                <svg className="w-3.5 h-3.5 text-blue-400 animate-pulse shrink-0" fill="currentColor" viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="4" />
-                </svg>
-              )}
-              <span className={step.done ? "text-gray-400" : "text-gray-700"}>{step.text}</span>
-            </div>
-          ))}
-          {/* Current live status not yet in steps */}
-          {currentStatus && !steps.some((s) => s.text === currentStatus) && (
-            <div className="flex items-center gap-2 text-xs text-gray-700">
-              <svg className="w-3.5 h-3.5 text-blue-400 animate-pulse shrink-0" fill="currentColor" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="4" />
-              </svg>
-              {currentStatus}
-            </div>
-          )}
+          <span className="text-gray-700">{status || "Planning your trip..."}</span>
         </div>
       </div>
     </div>
   );
 }
 
+const CONTEXT_KEY = "conversation-context-id";
+
+function loadContextId(): string {
+  try {
+    const stored = localStorage.getItem(CONTEXT_KEY);
+    if (stored) return stored;
+  } catch {}
+  const id = crypto.randomUUID();
+  try { localStorage.setItem(CONTEXT_KEY, id); } catch {}
+  return id;
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>(loadHistory);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
   const [currentStatus, setCurrentStatus] = useState("");
   const [sessionTokens, setSessionTokens] = useState(0);
+  const [contextId, setContextId] = useState<string>(loadContextId);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -129,25 +132,16 @@ export default function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading, progressSteps, currentStatus]);
+  }, [messages, loading, currentStatus]);
 
   function clearConversation() {
+    const newId = crypto.randomUUID();
+    setContextId(newId);
+    try { localStorage.setItem(CONTEXT_KEY, newId); } catch {}
     setMessages([WELCOME]);
     setSessionTokens(0);
-    setProgressSteps([]);
     setCurrentStatus("");
     localStorage.removeItem(STORAGE_KEY);
-  }
-
-  function addProgressStep(text: string) {
-    setProgressSteps((prev) => {
-      // Mark the current active step as done, add the new one as active
-      return [
-        ...prev.map((s) => ({ ...s, done: true })),
-        { text, done: false },
-      ];
-    });
-    setCurrentStatus(text);
   }
 
   async function send() {
@@ -156,8 +150,10 @@ export default function ChatPage() {
 
     setInput("");
     setLoading(true);
-    setProgressSteps([]);
     setCurrentStatus("");
+
+    const startTime = Date.now();
+    const logSteps: { text: string; timestamp: string }[] = [];
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -192,6 +188,7 @@ export default function ChatPage() {
               role: "user",
               parts: [{ kind: "text", text }],
               kind: "message",
+              contextId,
               metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
             },
           },
@@ -236,7 +233,10 @@ export default function ChatPage() {
 
             if (kind === "status-update") {
               const msg: string | undefined = event.status?.message?.parts?.[0]?.text;
-              if (msg) addProgressStep(msg);
+              if (msg) {
+                setCurrentStatus(msg);
+                logSteps.push({ text: msg, timestamp: new Date().toISOString() });
+              }
               if (event.final) break outer;
             } else if (kind === "artifact-update") {
               const txt: string | undefined = event.artifact?.parts?.[0]?.text;
@@ -250,6 +250,18 @@ export default function ChatPage() {
           }
         }
 
+        const durationMs = Date.now() - startTime;
+
+        // Save to log
+        saveLogEntry({
+          id: crypto.randomUUID(),
+          timestamp: userMsg.timestamp,
+          userInput: text,
+          durationMs,
+          steps: logSteps,
+          tokenUsage,
+        });
+
         setMessages((prev) => [
           ...prev,
           {
@@ -258,6 +270,7 @@ export default function ChatPage() {
             text: finalText || "(No response received)",
             timestamp: new Date().toISOString(),
             tokenUsage,
+            durationMs,
           },
         ]);
         return;
@@ -271,6 +284,7 @@ export default function ChatPage() {
         task?.status?.message?.parts?.[0]?.text ||
         "(No response received)";
 
+      const durationMs = Date.now() - startTime;
       setMessages((prev) => [
         ...prev,
         {
@@ -278,6 +292,7 @@ export default function ChatPage() {
           role: "agent",
           text: reply,
           timestamp: new Date().toISOString(),
+          durationMs,
         },
       ]);
     } catch (err: any) {
@@ -292,7 +307,6 @@ export default function ChatPage() {
       ]);
     } finally {
       setLoading(false);
-      setProgressSteps([]);
       setCurrentStatus("");
     }
   }
@@ -362,11 +376,11 @@ export default function ChatPage() {
               </div>
               {msg.role === "agent" && (
                 <div className="flex items-center gap-3 flex-wrap">
-                  {msg.tokenUsage && (
-                    <span className="text-[11px] text-gray-400 mt-1 ml-1">
-                      Input {msg.tokenUsage.input.toLocaleString()} · Output {msg.tokenUsage.output.toLocaleString()} tokens
-                    </span>
-                  )}
+                  <span className="text-[11px] text-gray-400 mt-1 ml-1">
+                    {msg.durationMs != null && `${(msg.durationMs / 1000).toFixed(1)}s`}
+                    {msg.durationMs != null && msg.tokenUsage && " · "}
+                    {msg.tokenUsage && `Input ${msg.tokenUsage.input.toLocaleString()} · Output ${msg.tokenUsage.output.toLocaleString()} tokens`}
+                  </span>
                   <CopyButton text={msg.text} />
                 </div>
               )}
@@ -374,10 +388,8 @@ export default function ChatPage() {
           </div>
         ))}
 
-        {/* Progress indicator while loading */}
-        {loading && (
-          <ProgressIndicator steps={progressSteps} currentStatus={currentStatus} />
-        )}
+        {/* Single-line progress indicator while loading */}
+        {loading && <ProgressIndicator status={currentStatus} />}
 
         <div ref={bottomRef} />
       </div>

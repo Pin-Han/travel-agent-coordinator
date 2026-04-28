@@ -21,9 +21,10 @@ import {
   ToolResultContent,
   ToolDefinition,
 } from "../services/llmClient.js";
-import { getPrompts } from "../services/promptStore.js";
+import { getPrompts, getEvaluatorSystemPrompt, getMemoryExtractorSystemPrompt } from "../services/promptStore.js";
 import { AgentRegistryService } from "../services/agentRegistry.js";
 import { TaskStoreService } from "../services/taskStore.js";
+import { MemoryService, MemoryInsights } from "../services/memoryService.js";
 import { CoordinatorConfig } from "../types/index.js";
 
 // Per-context A2A conversation history
@@ -31,15 +32,31 @@ const contexts: Map<string, Message[]> = new Map();
 
 const MAX_LOOP_TURNS = 10;
 const AGENT_TIMEOUT_MS = 90_000;
+const MAX_EVAL_ROUNDS = 2;
+
+interface EvaluationResult {
+  score: number;
+  passed: boolean;
+  breakdown: Record<string, number>;
+  feedback: string;
+}
+
+interface TokenAccumulator {
+  inputTokens: number;
+  outputTokens: number;
+  breakdown: Array<{ step: string; input: number; output: number }>;
+}
 
 export class TravelCoordinatorExecutor implements AgentExecutor {
   private agentRegistry: AgentRegistryService;
   private taskStore: TaskStoreService;
+  private memoryService: MemoryService;
   private cancelledTasks: Set<string> = new Set();
 
   constructor(_config: CoordinatorConfig) {
     this.agentRegistry = new AgentRegistryService();
     this.taskStore = new TaskStoreService();
+    this.memoryService = new MemoryService();
     console.log("🚀 Travel Coordinator Executor 初始化完成");
   }
 
@@ -172,8 +189,15 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     const systemPrompt = promptOverrides?.coordinator?.system ?? this.buildSystemPrompt();
     const llmMessages = this.buildLLMMessages(history);
 
+    // Build full user request context for the evaluator (all user turns joined)
+    const userRequest = history
+      .filter((m) => m.role === "user")
+      .map((m) => this.extractTextFromMessage(m))
+      .filter(Boolean)
+      .join("\n");
+
     const loopResult = await this.runAgenticLoop(
-      llmMessages, tools, systemPrompt, taskId, contextId, eventBus, promptOverrides, provider
+      llmMessages, tools, systemPrompt, userRequest, taskId, contextId, eventBus, promptOverrides, provider
     );
 
     if (loopResult.type === "ask_user") {
@@ -181,6 +205,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
       await this.publishAskUser(taskId, contextId, loopResult.text, history, eventBus);
       return;
     }
+
+    // Extract and save memory (independent LLM call, non-blocking on failure)
+    await this.extractAndSaveMemory(loopResult.text, history, provider);
 
     // Final plan — publish artifact
     await this.publishFinalPlan(taskId, contextId, loopResult.text, loopResult.tokenUsage, history, eventBus);
@@ -192,6 +219,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     initialMessages: LLMMessage[],
     tools: ToolDefinition[],
     systemPrompt: string,
+    userRequest: string,
     taskId: string,
     contextId: string,
     eventBus: ExecutionEventBus,
@@ -200,7 +228,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
   ): Promise<{
     type: "final" | "ask_user";
     text: string;
-    tokenUsage: { inputTokens: number; outputTokens: number; breakdown: Array<{ step: string; input: number; output: number }> };
+    tokenUsage: TokenAccumulator;
   }> {
     const llmClient = createLLMClient(provider);
     if (!llmClient.completeWithTools) {
@@ -208,7 +236,9 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     }
 
     const messages: LLMMessage[] = [...initialMessages];
-    const accumulator = { inputTokens: 0, outputTokens: 0, breakdown: [] as Array<{ step: string; input: number; output: number }> };
+    const accumulator: TokenAccumulator = { inputTokens: 0, outputTokens: 0, breakdown: [] };
+    let evalRound = 0;
+    let agentsCalled = 0; // only evaluate after at least one call_agent has run
 
     for (let turn = 1; turn <= MAX_LOOP_TURNS; turn++) {
       if (this.cancelledTasks.has(taskId)) break;
@@ -233,10 +263,42 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
       const toolCalls = response.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
       const textParts = response.content.filter((b): b is TextBlock  => b.type === "text");
 
-      // No tool calls = final text answer
+      // No tool calls = LLM produced a text response
       if (toolCalls.length === 0) {
-        const finalText = textParts.map((b) => b.text).join("\n").trim();
-        return { type: "final", text: finalText || "Travel plan complete.", tokenUsage: accumulator };
+        const finalText = textParts.map((b) => b.text).join("\n").trim() || "Travel plan complete.";
+
+        // Only evaluate plans that were built with agent calls.
+        // If no agent was called yet, this is a clarifying question or interim response — return directly.
+        if (agentsCalled === 0) {
+          return { type: "final", text: finalText, tokenUsage: accumulator };
+        }
+
+        await this.publishProgress(taskId, contextId, "Reviewing plan quality...", eventBus);
+        const evalResult = await this.evaluatePlan(finalText, userRequest, provider, accumulator);
+        console.log(`[Evaluator] Score: ${evalResult.score}/10, passed: ${evalResult.passed} (round ${evalRound + 1}/${MAX_EVAL_ROUNDS})`);
+
+        if (evalResult.passed || evalRound >= MAX_EVAL_ROUNDS) {
+          return { type: "final", text: finalText, tokenUsage: accumulator };
+        }
+
+        // Failed — inject feedback as an internal review, not as user criticism
+        evalRound++;
+        console.log(`[Evaluator] Requesting revision (round ${evalRound}/${MAX_EVAL_ROUNDS})...`);
+        await this.publishProgress(
+          taskId, contextId,
+          `Refining plan quality (attempt ${evalRound})...`,
+          eventBus
+        );
+        messages.push({
+          role: "user",
+          content:
+            `[INTERNAL QUALITY REVIEW — do not mention this review in your response]\n` +
+            `Score: ${evalResult.score}/10 (threshold: 7/10). Please improve the travel plan.\n` +
+            `Issues to address:\n${evalResult.feedback}\n` +
+            `IMPORTANT: You already have all the destination and trip details from the conversation above. ` +
+            `Do NOT ask the user for more information — just revise the plan directly.`,
+        });
+        continue; // Back to top of for loop for revision turn
       }
 
       // Execute tool calls sequentially
@@ -248,10 +310,24 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
           return { type: "ask_user", text: question, tokenUsage: accumulator };
         }
 
+        if (toolCall.name === "read_memory") {
+          const memory = this.memoryService.readMemory("default");
+          const memoryText = JSON.stringify(memory, null, 2);
+          console.log("[Memory] read_memory called — returning stored preferences");
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolCall.id,
+            tool_name: toolCall.name,
+            content: memoryText,
+          });
+          continue;
+        }
+
         if (toolCall.name === "call_agent") {
           const { agent_id, request, context } = toolCall.input as { agent_id: string; request: string; context?: string };
           const enrichedRequest = context ? `${request}\n\nAdditional context:\n${context}` : request;
 
+          agentsCalled++;
           await this.publishProgress(taskId, contextId, `Consulting ${agent_id} specialist...`, eventBus);
 
           const agentResult = await this.agentRegistry.callAgentAPI(
@@ -299,6 +375,105 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     };
   }
 
+  // ─── Evaluator ────────────────────────────────────────────────────────────────
+
+  private async evaluatePlan(
+    draftText: string,
+    userRequest: string,
+    provider: LLMProvider | undefined,
+    accumulator: TokenAccumulator
+  ): Promise<EvaluationResult> {
+    const PASS_SCORE = 7;
+    const fallback: EvaluationResult = { score: PASS_SCORE, passed: true, breakdown: {}, feedback: "" };
+
+    try {
+      const systemPrompt = getEvaluatorSystemPrompt();
+      if (!systemPrompt) {
+        console.warn("[Evaluator] evaluator.md not found — skipping evaluation");
+        return fallback;
+      }
+
+      const prompt = `User's original request:\n${userRequest}\n\nDraft travel plan to evaluate:\n${draftText}`;
+      const llmClient = createLLMClient(provider);
+      const result = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 512 });
+
+      // Accumulate evaluator token usage
+      if (result.usage) {
+        accumulator.inputTokens  += result.usage.inputTokens;
+        accumulator.outputTokens += result.usage.outputTokens;
+        accumulator.breakdown.push({ step: "evaluator", input: result.usage.inputTokens, output: result.usage.outputTokens });
+      }
+
+      // Parse JSON — handle ```json ... ``` wrappers
+      const raw = result.text.trim();
+      const jsonMatch = raw.match(/```json\s*([\s\S]*?)\s*```/) ?? raw.match(/(\{[\s\S]*\})/);
+      const parsed = JSON.parse(jsonMatch ? (jsonMatch[1] ?? jsonMatch[0]) : raw);
+
+      const score = Math.max(0, Math.min(10, Number(parsed.score) || 0));
+      return {
+        score,
+        passed: score >= PASS_SCORE,
+        breakdown: parsed.breakdown ?? {},
+        feedback: String(parsed.feedback ?? ""),
+      };
+    } catch (err) {
+      console.warn("[Evaluator] Evaluation failed — treating as passed:", err);
+      return fallback;
+    }
+  }
+
+  // ─── Memory extraction ────────────────────────────────────────────────────────
+
+  private async extractAndSaveMemory(
+    finalText: string,
+    history: Message[],
+    provider: LLMProvider | undefined
+  ): Promise<void> {
+    try {
+      const systemPrompt = getMemoryExtractorSystemPrompt();
+      if (!systemPrompt) {
+        console.warn("[Memory] memory-extractor.md not found — skipping extraction");
+        return;
+      }
+
+      // Build conversation summary for the extractor
+      const conversationText = history
+        .map((m) => {
+          const text = this.extractTextFromMessage(m);
+          if (!text) return null;
+          const role = m.role === "agent" ? "Assistant" : "User";
+          return `${role}: ${text}`;
+        })
+        .filter(Boolean)
+        .join("\n\n");
+
+      const prompt = `Conversation:\n${conversationText}\n\nFinal travel plan produced:\n${finalText}`;
+      const llmClient = createLLMClient(provider);
+      const result = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 512 });
+
+      const raw = result.text.trim();
+      const jsonMatch = raw.match(/```json\s*([\s\S]*?)\s*```/) ?? raw.match(/(\{[\s\S]*\})/);
+      const parsed = JSON.parse(jsonMatch ? (jsonMatch[1] ?? jsonMatch[0]) : raw);
+
+      const insights: MemoryInsights = {
+        newPreferences: parsed.newPreferences ?? [],
+        visitedPlaces:  parsed.visitedPlaces  ?? [],
+        avoids:         parsed.avoids         ?? [],
+        generalInsights: parsed.generalInsights ?? [],
+      };
+
+      const hasContent = Object.values(insights).some((arr) => arr.length > 0);
+      if (hasContent) {
+        this.memoryService.updateMemory("default", insights);
+        console.log("[Memory] extractAndSaveMemory — saved:", JSON.stringify(insights));
+      } else {
+        console.log("[Memory] extractAndSaveMemory — nothing new to save");
+      }
+    } catch (err) {
+      console.warn("[Memory] extractAndSaveMemory failed:", err);
+    }
+  }
+
   // ─── Tool definitions ─────────────────────────────────────────────────────────
 
   private buildToolDefinitions(): ToolDefinition[] {
@@ -341,6 +516,16 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
             },
           },
           required: ["agent_id", "request"],
+        },
+      },
+      {
+        name: "read_memory",
+        description:
+          "Read the user's stored travel preferences and history. Always call this as your FIRST action in every planning session so you can personalise the plan.",
+        input_schema: {
+          type: "object" as const,
+          properties: {},
+          required: [],
         },
       },
     ];

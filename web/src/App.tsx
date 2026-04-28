@@ -1,6 +1,7 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import ChatPage from "./pages/ChatPage";
 import SettingsPage from "./pages/SettingsPage";
+import LogsPage from "./pages/LogsPage";
 
 export default function App() {
   return (
@@ -33,6 +34,20 @@ export default function App() {
               <span className="hidden sm:inline">Chat</span>
             </NavLink>
             <NavLink
+              to="/logs"
+              className={({ isActive }) =>
+                `flex items-center justify-center sm:justify-start gap-2 px-2 sm:px-3 py-2 rounded-md text-sm transition-colors ${
+                  isActive
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-300 hover:bg-gray-700"
+                }`
+              }
+              title="Logs"
+            >
+              <span className="text-base">📋</span>
+              <span className="hidden sm:inline">Logs</span>
+            </NavLink>
+            <NavLink
               to="/settings"
               className={({ isActive }) =>
                 `flex items-center justify-center sm:justify-start gap-2 px-2 sm:px-3 py-2 rounded-md text-sm transition-colors ${
@@ -53,6 +68,7 @@ export default function App() {
         <main className="flex-1 overflow-hidden">
           <Routes>
             <Route path="/" element={<ChatPage />} />
+            <Route path="/logs" element={<LogsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>

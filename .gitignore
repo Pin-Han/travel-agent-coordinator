@@ -3,3 +3,4 @@ node_modules
 dist
 a2a-js
 CLAUDE.md
+data/memory/

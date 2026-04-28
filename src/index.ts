@@ -14,6 +14,7 @@ import { TravelCoordinatorExecutor } from "./agents/coordinatorExecutor.js";
 import { generateAgentCard } from "./utils/agentCard.js";
 import { CoordinatorConfig } from "./types/index.js";
 import { getPrompts, savePrompts } from "./services/promptStore.js";
+import { MemoryService } from "./services/memoryService.js";
 
 // 載入環境變數
 dotenv.config();
@@ -48,6 +49,7 @@ async function main() {
 
   // 2. Create AgentExecutor
   const agentExecutor: AgentExecutor = new TravelCoordinatorExecutor(config);
+  const memoryService = new MemoryService();
 
   // 3. Create DefaultRequestHandler
   const requestHandler = new DefaultRequestHandler(
@@ -75,6 +77,16 @@ async function main() {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // Memory API
+  expressApp.get("/api/memory", (_req, res) => {
+    res.json(memoryService.readMemory("default"));
+  });
+
+  expressApp.delete("/api/memory", (_req, res) => {
+    memoryService.clearMemory("default");
+    res.json({ ok: true });
   });
 
   // 5. Start the server

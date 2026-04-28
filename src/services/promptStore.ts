@@ -71,6 +71,21 @@ function readCoordinatorPrompt(): CoordinatorPrompt {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 // Every call re-reads from disk so all processes see edits immediately.
+
+export function getEvaluatorSystemPrompt(): string {
+  const filePath = join(PROMPTS_DIR, "evaluator.md");
+  if (!existsSync(filePath)) return "";
+  const sections = parseMdSections(readFileSync(filePath, "utf-8"));
+  return sections["system"] ?? "";
+}
+
+export function getMemoryExtractorSystemPrompt(): string {
+  const filePath = join(PROMPTS_DIR, "memory-extractor.md");
+  if (!existsSync(filePath)) return "";
+  const sections = parseMdSections(readFileSync(filePath, "utf-8"));
+  return sections["system"] ?? "";
+}
+
 export function getPrompts(): Prompts {
   return {
     attractions:    readAgentPrompt("attractions"),

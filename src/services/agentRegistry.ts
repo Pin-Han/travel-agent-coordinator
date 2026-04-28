@@ -2,6 +2,12 @@ import { AgentRegistry, AgentAPIResponse } from "../types/index.js";
 import { createLLMClient, LLMClient, LLMProvider } from "./llmClient.js";
 import { TavilyMCPClient } from "./tavilyMCPClient.js";
 import { getPrompts } from "./promptStore.js";
+import {
+  validateAttractions,
+  validateAccommodation,
+  validateTransportation,
+  buildRetryFeedback,
+} from "./schemaValidator.js";
 
 /**
  * Wraps fetch with up to 2 retries on network errors or 5xx responses.
@@ -234,6 +240,34 @@ export class AgentRegistryService {
   }
 
   /**
+   * Schema validation + one-shot retry helper.
+   * Returns { text, structuredData } — structuredData is null on graceful degradation.
+   */
+  private async validateAndRetry<T>(
+    agentId: string,
+    firstText: string,
+    validator: (raw: string) => { valid: boolean; data?: T; errors: string[] },
+    retry: () => Promise<string>
+  ): Promise<{ text: string; structuredData: T | null }> {
+    const first = validator(firstText);
+    if (first.valid && first.data) {
+      console.log(`[SchemaValidator] ${agentId} — validation passed on first try`);
+      return { text: JSON.stringify(first.data), structuredData: first.data };
+    }
+
+    console.warn(`[SchemaValidator] ${agentId} — validation failed: ${first.errors.join("; ")}. Retrying...`);
+    const retryText = await retry();
+    const second = validator(retryText);
+    if (second.valid && second.data) {
+      console.log(`[SchemaValidator] ${agentId} — validation passed after retry`);
+      return { text: JSON.stringify(second.data), structuredData: second.data };
+    }
+
+    console.warn(`[SchemaValidator] ${agentId} — retry also failed (${second.errors.join("; ")}). Falling back to plain text.`);
+    return { text: firstText, structuredData: null };
+  }
+
+  /**
    * 景點推薦（LLM 直接回應）— uses promptStore as single source of truth
    */
   private async callAttractionsLLM(data: any): Promise<AgentAPIResponse> {
@@ -251,13 +285,27 @@ export class AgentRegistryService {
       ? `${data.request}\n\nReal travel data from web search:\n${searchData}`
       : data.request;
 
-    const prompt = userTemplate.replace("{request}", enrichedRequest || "");
+    const prompt = userTemplate.replace("{request}", enrichedRequest || "") + "\n\nBegin JSON:";
     const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
     const llmResult = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 1500 });
 
+    const { text, structuredData } = await this.validateAndRetry(
+      "attractions",
+      llmResult.text,
+      validateAttractions,
+      async () => {
+        const feedback = buildRetryFeedback("attractions", validateAttractions(llmResult.text).errors);
+        const retryResult = await llmClient.complete(
+          `${prompt}\n\n${feedback}`,
+          { system: systemPrompt, maxTokens: 1500 }
+        );
+        return retryResult.text;
+      }
+    );
+
     return {
       success: true,
-      data: { response: llmResult.text, tokenUsage: llmResult.usage },
+      data: { response: text, structuredData, tokenUsage: llmResult.usage },
       api: "attractions",
       action: "recommend_attractions",
       timestamp: new Date().toISOString(),
@@ -292,13 +340,27 @@ export class AgentRegistryService {
       ? `${data.request}\n\n${contextLines}`
       : data.request;
 
-    const prompt = userTemplate.replace("{request}", enrichedRequest || "");
+    const prompt = userTemplate.replace("{request}", enrichedRequest || "") + "\n\nBegin JSON:";
     const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
     const llmResult = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 1500 });
 
+    const { text, structuredData } = await this.validateAndRetry(
+      "accommodation",
+      llmResult.text,
+      validateAccommodation,
+      async () => {
+        const feedback = buildRetryFeedback("accommodation", validateAccommodation(llmResult.text).errors);
+        const retryResult = await llmClient.complete(
+          `${prompt}\n\n${feedback}`,
+          { system: systemPrompt, maxTokens: 1500 }
+        );
+        return retryResult.text;
+      }
+    );
+
     return {
       success: true,
-      data: { response: llmResult.text, tokenUsage: llmResult.usage },
+      data: { response: text, structuredData, tokenUsage: llmResult.usage },
       api: "accommodation",
       action: "recommend_accommodation",
       timestamp: new Date().toISOString(),
@@ -335,13 +397,27 @@ export class AgentRegistryService {
       ? `${data.request}\n\n${contextLines}`
       : data.request;
 
-    const prompt = userTemplate.replace("{request}", enrichedRequest || "");
+    const prompt = userTemplate.replace("{request}", enrichedRequest || "") + "\n\nBegin JSON:";
     const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
     const llmResult = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 1500 });
 
+    const { text, structuredData } = await this.validateAndRetry(
+      "transportation",
+      llmResult.text,
+      validateTransportation,
+      async () => {
+        const feedback = buildRetryFeedback("transportation", validateTransportation(llmResult.text).errors);
+        const retryResult = await llmClient.complete(
+          `${prompt}\n\n${feedback}`,
+          { system: systemPrompt, maxTokens: 1500 }
+        );
+        return retryResult.text;
+      }
+    );
+
     return {
       success: true,
-      data: { response: llmResult.text, tokenUsage: llmResult.usage },
+      data: { response: text, structuredData, tokenUsage: llmResult.usage },
       api: "transportation",
       action: "recommend_transportation",
       timestamp: new Date().toISOString(),
