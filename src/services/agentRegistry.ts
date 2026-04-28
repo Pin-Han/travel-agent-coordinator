@@ -1,6 +1,36 @@
 import { AgentRegistry, AgentAPIResponse } from "../types/index.js";
 import { createLLMClient, LLMClient, LLMProvider } from "./llmClient.js";
 import { TavilyMCPClient } from "./tavilyMCPClient.js";
+import { getPrompts } from "./promptStore.js";
+
+/**
+ * Wraps fetch with up to 2 retries on network errors or 5xx responses.
+ * AbortError (timeout) is NOT retried — the caller already set its own timeout.
+ */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  maxAttempts = 3,
+  baseDelayMs = 800
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.ok || (res.status >= 400 && res.status < 500)) return res; // don't retry client errors
+      lastErr = new Error(`HTTP ${res.status}: ${res.statusText}`);
+    } catch (err: any) {
+      if (err?.name === "AbortError") throw err; // respect timeout, don't retry
+      lastErr = err;
+    }
+    if (attempt < maxAttempts) {
+      const delay = baseDelayMs * Math.pow(2, attempt - 1);
+      console.warn(`[A2A] Attempt ${attempt} failed, retrying in ${delay}ms...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
 
 export class AgentRegistryService {
   private agents: Map<string, AgentRegistry> = new Map();
@@ -58,6 +88,31 @@ export class AgentRegistryService {
     console.log(
       `   模式: ${
         this.getAgent("accommodation")?.endpoint === "api"
+          ? "LLM API"
+          : "A2A 協議"
+      }`
+    );
+
+    // 交通規劃代理
+    this.registerAgent({
+      id: "transportation",
+      name: "Transportation Planning Agent",
+      endpoint:
+        process.env.TRANSPORTATION_MODE === "a2a"
+          ? process.env.TRANSPORTATION_AGENT_URL || "http://localhost:3003"
+          : "api",
+      description: "Provides daily transit routes, transport mode recommendations, and cost estimates",
+      capabilities: ["transit", "routing", "transportation"],
+    });
+
+    console.log(
+      `🤖 已註冊代理: ${this.getAgent("transportation")?.name} (${
+        this.getAgent("transportation")?.id
+      })`
+    );
+    console.log(
+      `   模式: ${
+        this.getAgent("transportation")?.endpoint === "api"
           ? "LLM API"
           : "A2A 協議"
       }`
@@ -145,10 +200,11 @@ export class AgentRegistryService {
   }
 
   /**
-   * 組合 A2A message/send endpoint URL（移除尾部斜線後附加路徑）
+   * A2A SDK v0.3.1 routes all JSON-RPC at POST /
+   * The method name (e.g. "message/send") is in the request body, not the URL.
    */
   private buildA2AUrl(endpoint: string): string {
-    return endpoint.replace(/\/$/, "") + "/message/send";
+    return endpoint.replace(/\/$/, "") + "/";
   }
 
   /**
@@ -166,6 +222,8 @@ export class AgentRegistryService {
         return await this.callAttractionsLLM(data);
       } else if (agentId === "accommodation") {
         return await this.callAccommodationLLM(data);
+      } else if (agentId === "transportation") {
+        return await this.callTransportationLLM(data);
       } else {
         throw new Error(`不支援的 LLM 代理: ${agentId}`);
       }
@@ -176,45 +234,30 @@ export class AgentRegistryService {
   }
 
   /**
-   * 景點推薦（LLM 直接回應）
+   * 景點推薦（LLM 直接回應）— uses promptStore as single source of truth
    */
   private async callAttractionsLLM(data: any): Promise<AgentAPIResponse> {
-    const travelInfo = this.extractTravelInfo(data.request || "");
+    const { attractions } = getPrompts();
+    const systemPrompt: string = data.promptOverride?.system ?? attractions.system;
+    const userTemplate: string = data.promptOverride?.user ?? attractions.user;
 
-    // Try Tavily MCP for real attraction data
+    // Enrich request with real web data from Tavily
     const tavilyClient = TavilyMCPClient.getInstance();
     const searchData = await tavilyClient.search(
-      `${travelInfo.destination} top attractions must-see travel guide`,
+      `${data.request} top attractions must-see travel guide`,
       8
     );
+    const enrichedRequest = searchData
+      ? `${data.request}\n\nReal travel data from web search:\n${searchData}`
+      : data.request;
 
-    const searchContext = searchData
-      ? `\n\n以下是透過 Tavily 搜尋到的真實資料，請參考：\n${searchData}`
-      : "";
-
-    const prompt = `你是一位專業的旅遊景點顧問。請根據以下資訊推薦景點和美食：
-- 目的地：${travelInfo.destination}
-- 天數：${travelInfo.duration}天
-- 預算：${travelInfo.budget ? `${travelInfo.budget}元` : "不限"}
-- 偏好：${travelInfo.preferences.length > 0 ? travelInfo.preferences.join(", ") : "無特殊偏好"}
-- 人數：${travelInfo.travelers}人${searchContext}
-
-請提供：
-1. 每天推薦的景點和美食（依天數規劃）
-2. 各景點所在地區（結尾附「景點地區摘要」列出各天活動地區，供住宿規劃參考）
-3. 各景點費用估算
-
-請用繁體中文回答，格式清晰易讀。`;
-
+    const prompt = userTemplate.replace("{request}", enrichedRequest || "");
     const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
-    const response = await llmClient.complete(prompt, {
-      system: "你是一位專業的旅遊規劃師，擅長為旅客規劃客製化的旅遊行程。",
-      maxTokens: 1500,
-    });
+    const llmResult = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 1500 });
 
     return {
       success: true,
-      data: { response },
+      data: { response: llmResult.text, tokenUsage: llmResult.usage },
       api: "attractions",
       action: "recommend_attractions",
       timestamp: new Date().toISOString(),
@@ -222,49 +265,40 @@ export class AgentRegistryService {
   }
 
   /**
-   * 住宿規劃（LLM 直接回應）
+   * 住宿規劃（LLM 直接回應）— uses promptStore as single source of truth
    */
   private async callAccommodationLLM(data: any): Promise<AgentAPIResponse> {
-    const travelInfo = this.extractTravelInfo(data.request || "");
-    const attractionArea: string = data.attractionArea || travelInfo.destination;
+    const { accommodation } = getPrompts();
+    const systemPrompt: string = data.promptOverride?.system ?? accommodation.system;
+    const userTemplate: string = data.promptOverride?.user ?? accommodation.user;
 
-    // Try Tavily MCP — search near the attraction area (dependency on Attractions Agent)
+    const attractionArea: string = data.attractionArea || "";
+
+    // Search hotels near attraction area
     const tavilyClient = TavilyMCPClient.getInstance();
-    const searchData = await tavilyClient.search(
-      `hotels accommodation near ${attractionArea} ${travelInfo.destination} budget`,
-      6
-    );
+    const searchQuery = attractionArea
+      ? `hotels accommodation near ${attractionArea} budget`
+      : `hotels accommodation ${data.request} budget`;
+    const searchData = await tavilyClient.search(searchQuery, 6);
 
-    const searchContext = searchData
-      ? `\n\n以下是透過 Tavily 搜尋到的真實住宿資料，請參考：\n${searchData}`
-      : "";
+    const contextLines = [
+      attractionArea ? `Attraction areas (for proximity): ${attractionArea}` : "",
+      searchData ? `\nReal hotel data from web search:\n${searchData}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
 
-    const areaContext = attractionArea !== travelInfo.destination
-      ? `\n- 景點集中區域（由景點推薦 Agent 提供）：${attractionArea}`
-      : "";
+    const enrichedRequest = contextLines
+      ? `${data.request}\n\n${contextLines}`
+      : data.request;
 
-    const prompt = `你是一位專業的住宿和交通規劃顧問。請根據以下資訊推薦住宿和交通方案：
-- 目的地：${travelInfo.destination}
-- 天數：${travelInfo.duration}天
-- 預算：${travelInfo.budget ? `${travelInfo.budget}元` : "不限"}
-- 人數：${travelInfo.travelers}人${areaContext}${searchContext}
-
-請提供：
-1. 推薦住宿選項（2-3 間，含價格區間、位置優勢，說明為何靠近主要景點）
-2. 各天的交通建議（大眾運輸 / 步行距離）
-3. 住宿訂房注意事項
-
-請用繁體中文回答，格式清晰易讀。`;
-
+    const prompt = userTemplate.replace("{request}", enrichedRequest || "");
     const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
-    const response = await llmClient.complete(prompt, {
-      system: "你是一位專業的旅遊規劃師，擅長為旅客安排住宿和交通。",
-      maxTokens: 1500,
-    });
+    const llmResult = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 1500 });
 
     return {
       success: true,
-      data: { response },
+      data: { response: llmResult.text, tokenUsage: llmResult.usage },
       api: "accommodation",
       action: "recommend_accommodation",
       timestamp: new Date().toISOString(),
@@ -272,65 +306,46 @@ export class AgentRegistryService {
   }
 
   /**
-   * 從用戶請求中提取旅遊資訊
+   * 交通規劃（LLM 直接回應）— uses promptStore as single source of truth
    */
-  private extractTravelInfo(request: string): any {
-    const destination = this.extractDestination(request) || "台灣";
-    const duration = this.extractDuration(request) || 3;
-    const travelers = this.extractTravelers(request) || 1;
-    const budget = this.extractBudget(request);
-    const preferences = this.extractPreferences(request);
+  private async callTransportationLLM(data: any): Promise<AgentAPIResponse> {
+    const { transportation } = getPrompts();
+    const systemPrompt: string = data.promptOverride?.system ?? transportation.system;
+    const userTemplate: string = data.promptOverride?.user ?? transportation.user;
 
-    return { destination, duration, travelers, budget, preferences };
-  }
+    const attractionArea: string = data.attractionArea || "";
+    const accommodationArea: string = data.accommodationArea || "";
 
-  private extractDestination(request: string): string | null {
-    const cities = [
-      "台北",
-      "高雄",
-      "台中",
-      "台南",
-      "新竹",
-      "桃園",
-      "基隆",
-      "花蓮",
-      "台東",
-      "宜蘭",
-    ];
-    for (const city of cities) {
-      if (request.includes(city)) return city;
-    }
-    return null;
-  }
+    // Search real transit information
+    const tavilyClient = TavilyMCPClient.getInstance();
+    const searchQuery = attractionArea
+      ? `public transit guide ${attractionArea} subway bus routes`
+      : `public transit guide ${data.request} transportation`;
+    const searchData = await tavilyClient.search(searchQuery, 6);
 
-  private extractDuration(request: string): number {
-    const match = request.match(/(\d+)\s*天/);
-    return match ? parseInt(match[1]) : 3;
-  }
+    const contextLines = [
+      attractionArea ? `Attraction areas: ${attractionArea}` : "",
+      accommodationArea ? `Accommodation location: ${accommodationArea}` : "",
+      searchData ? `\nReal transit data from web search:\n${searchData}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
 
-  private extractTravelers(request: string): number {
-    const match =
-      request.match(/(\d+)\s*人/) || request.match(/帶\s*(\d+)\s*個/);
-    return match ? parseInt(match[1]) + 1 : 1;
-  }
+    const enrichedRequest = contextLines
+      ? `${data.request}\n\n${contextLines}`
+      : data.request;
 
-  private extractBudget(request: string): number | null {
-    const match = request.match(/預算\s*(\d+)/);
-    return match ? parseInt(match[1]) : null;
-  }
+    const prompt = userTemplate.replace("{request}", enrichedRequest || "");
+    const llmClient = createLLMClient(data.provider as LLMProvider | undefined);
+    const llmResult = await llmClient.complete(prompt, { system: systemPrompt, maxTokens: 1500 });
 
-  private extractPreferences(request: string): string[] {
-    const preferences = [];
-    if (request.includes("美食") || request.includes("餐廳"))
-      preferences.push("美食");
-    if (request.includes("文化") || request.includes("古蹟"))
-      preferences.push("文化");
-    if (request.includes("親子") || request.includes("小孩"))
-      preferences.push("親子");
-    if (request.includes("購物")) preferences.push("購物");
-    if (request.includes("自然") || request.includes("風景"))
-      preferences.push("自然");
-    return preferences;
+    return {
+      success: true,
+      data: { response: llmResult.text, tokenUsage: llmResult.usage },
+      api: "transportation",
+      action: "recommend_transportation",
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**
@@ -356,12 +371,13 @@ export class AgentRegistryService {
               text: data.request || JSON.stringify(data),
             },
           ],
-          // prompt override, provider, attractionArea 透過 metadata 傳遞給 sub-agent
-          ...((data.promptOverride || data.provider || data.attractionArea) && {
+          // prompt override, provider, attractionArea, accommodationArea 透過 metadata 傳遞給 sub-agent
+          ...((data.promptOverride || data.provider || data.attractionArea || data.accommodationArea) && {
             metadata: {
               ...(data.promptOverride && { promptOverride: data.promptOverride }),
               ...(data.provider && { provider: data.provider }),
               ...(data.attractionArea && { attractionArea: data.attractionArea }),
+              ...(data.accommodationArea && { accommodationArea: data.accommodationArea }),
             },
           }),
           kind: "message",
@@ -385,7 +401,7 @@ export class AgentRegistryService {
       const url = this.buildA2AUrl(agent.endpoint);
       console.log(`📡 發送 A2A 請求到 ${url}`);
 
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: "POST",
         headers,
         body: JSON.stringify(jsonRpcRequest),

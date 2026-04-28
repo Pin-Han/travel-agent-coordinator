@@ -7,13 +7,19 @@ interface AgentPrompt {
 
 interface CoordinatorPrompt {
   system: string;
-  integration: string;
-  fallback: string;
+  integration?: string;
+  fallback?: string;
+}
+
+interface TransportationPrompt {
+  system: string;
+  user: string;
 }
 
 interface Prompts {
   attractions: AgentPrompt;
   accommodation: AgentPrompt;
+  transportation: TransportationPrompt;
   coordinator: CoordinatorPrompt;
 }
 
@@ -26,18 +32,22 @@ const DEFAULT_LLM_CONFIG: LLMConfig = {
 };
 
 const LABELS: Record<string, string> = {
-  system: "System Prompt（角色設定）",
-  user: "User Prompt（任務指令，{request} 會被替換為使用者需求）",
+  system: "System Prompt (role definition)",
+  user: "User Prompt (task template — {request} is replaced with the user's input)",
   integration:
-    "整合 Prompt（{request}、{attractions}、{accommodation} 為變數）",
-  fallback: "備用 Prompt（{request} 為變數，當 Sub-agent 全失敗時使用）",
+    "Integration Prompt (variables: {request}, {attractions}, {accommodation}, {transportation})",
+  fallback: "Fallback Prompt (variable: {request} — used when all sub-agents fail)",
 };
 
 const AGENT_NAMES: Record<string, string> = {
-  attractions: "🗺️ Attractions Agent（景點推薦）",
-  accommodation: "🏨 Accommodation Agent（住宿規劃）",
-  coordinator: "🎯 Coordinator（整合層）",
+  attractions: "🗺️ Attractions Agent",
+  accommodation: "🏨 Accommodation Agent",
+  transportation: "🚇 Transportation Agent",
+  coordinator: "🎯 Coordinator (synthesis layer)",
 };
+
+// Fields managed by the system or deprecated — hidden from the UI editor
+const HIDDEN_FIELDS = new Set(["clarify", "integration", "fallback"]);
 
 export default function SettingsPage() {
   const [prompts, setPrompts] = useState<Prompts | null>(null);
@@ -59,9 +69,14 @@ export default function SettingsPage() {
     const stored = localStorage.getItem("agent-prompts");
     if (stored) {
       try {
-        setPrompts(JSON.parse(stored));
-        return;
+        const parsed = JSON.parse(stored);
+        // Evict stale cache if it's missing required agents added in later versions
+        if (parsed && parsed.transportation) {
+          setPrompts(parsed);
+          return;
+        }
       } catch {}
+      localStorage.removeItem("agent-prompts");
     }
     fetch("/api/prompts")
       .then((r) => r.json())
@@ -69,7 +84,7 @@ export default function SettingsPage() {
         setPrompts(data);
         localStorage.setItem("agent-prompts", JSON.stringify(data));
       })
-      .catch(() => setError("無法載入預設設定，請確認 Coordinator 已啟動。"));
+      .catch(() => setError("Failed to load default settings. Make sure the Coordinator server is running."));
   }, []);
 
   function handleChange(agent: keyof Prompts, field: string, value: string) {
@@ -103,7 +118,7 @@ export default function SettingsPage() {
   if (!prompts) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400">
-        載入中...
+        Loading...
       </div>
     );
   }
@@ -113,9 +128,9 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="sticky top-0 z-10 bg-white border-b px-6 py-3 flex items-center justify-between">
         <div>
-          <h2 className="font-semibold text-gray-700">設定</h2>
+          <h2 className="font-semibold text-gray-700">Settings</h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            修改後按「儲存」，設定存於瀏覽器本機，下次請求即生效
+            Changes are saved to your browser and take effect on the next request.
           </p>
         </div>
         <button
@@ -123,7 +138,7 @@ export default function SettingsPage() {
           disabled={saving}
           className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
         >
-          {saving ? "儲存中..." : saved ? "✓ 已儲存" : "儲存"}
+          {saving ? "Saving..." : saved ? "✓ Saved" : "Save"}
         </button>
       </div>
 
@@ -131,13 +146,13 @@ export default function SettingsPage() {
         {/* LLM Provider Section */}
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b bg-gray-50">
-            <h3 className="font-semibold text-gray-800">🤖 AI 模型設定</h3>
+            <h3 className="font-semibold text-gray-800">🤖 AI Model</h3>
           </div>
           <div className="p-5 space-y-5">
             {/* Provider selection */}
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-2">
-                選擇 AI 提供商
+                AI Provider
               </label>
               <div className="flex gap-4">
                 {(["anthropic", "gemini"] as const).map((p) => (
@@ -166,10 +181,10 @@ export default function SettingsPage() {
             </div>
 
             <p className="text-xs text-gray-400 mt-1">
-              選擇的提供商會隨請求傳給後端。API Key 需設定在伺服器的{" "}
+              The selected provider is sent with each request. API keys must be set in the server's{" "}
               <code className="font-mono bg-gray-100 px-1 rounded">.env</code>{" "}
-              檔案中（<code className="font-mono bg-gray-100 px-1 rounded">ANTHROPIC_API_KEY</code> 或{" "}
-              <code className="font-mono bg-gray-100 px-1 rounded">GEMINI_API_KEY</code>）。
+              file (<code className="font-mono bg-gray-100 px-1 rounded">ANTHROPIC_API_KEY</code> or{" "}
+              <code className="font-mono bg-gray-100 px-1 rounded">GEMINI_API_KEY</code>).
             </p>
           </div>
         </section>
@@ -183,7 +198,7 @@ export default function SettingsPage() {
               </h3>
             </div>
             <div className="p-5 space-y-5">
-              {Object.entries(prompts[agent]).map(([field, value]) => (
+              {Object.entries(prompts[agent] ?? {}).filter(([field]) => !HIDDEN_FIELDS.has(field)).map(([field, value]) => (
                 <div key={field}>
                   <label className="block text-xs font-medium text-gray-500 mb-1.5">
                     {LABELS[field] || field}

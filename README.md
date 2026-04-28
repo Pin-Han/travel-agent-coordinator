@@ -4,26 +4,30 @@ A multi-agent travel planning system built on [Google's A2A Protocol](https://go
 
 ## Architecture
 
+```mermaid
+graph TD
+    User["🧑 User\n(React Web UI :5173)"]
+    Coord["🤖 Coordinator Agent (:3000)\nAgentic Loop — LLM tool use"]
+    Attr["🗺️ Attractions Agent (:3001)"]
+    Accom["🏨 Accommodation Agent (:3002)"]
+    Trans["🚌 Transportation Agent (:3003)"]
+    Tavily["🔍 Tavily Search (MCP)"]
+
+    User -->|"A2A JSON-RPC 2.0\n(SSE streaming)"| Coord
+    Coord -->|"call_agent tool"| Attr
+    Coord -->|"call_agent tool"| Accom
+    Coord -->|"call_agent tool"| Trans
+    Attr --> Tavily
+    Accom --> Tavily
+    Trans --> Tavily
 ```
-User (React Web UI :5173)
-        │  A2A JSON-RPC 2.0
-        ▼
-Coordinator Agent (:3000)
-  ├── Parses intent & splits tasks
-  ├── Calls sub-agents in parallel
-  ├── Synthesizes results with LLM
-  └── Graceful degradation when sub-agents fail
-        │
-        ├── [A2A Protocol] ──▶ Attractions Agent (:3001)
-        │                        └── /.well-known/agent-card.json
-        │                        └── POST /message/send
-        │                        └── GET  /health
-        │
-        └── [A2A Protocol] ──▶ Accommodation Agent (:3002)
-                                 └── /.well-known/agent-card.json
-                                 └── POST /message/send
-                                 └── GET  /health
-```
+
+The **Coordinator** runs an **agentic loop**: instead of a hardcoded pipeline, an LLM decides which specialist agents to call, in what order, and when to ask the user for more details — using two tools:
+
+| Tool | What it does |
+|------|-------------|
+| `call_agent(agent_id, request, context)` | Calls a specialist by ID; agent list is built dynamically from the registry |
+| `ask_user(question)` | Surfaces a clarifying question; resumes on next user reply (A2A `input-required` state) |
 
 ### Dual-mode operation
 
@@ -34,13 +38,27 @@ Each sub-agent supports two modes, switchable via environment variable:
 | `api` (default) | Coordinator calls LLM directly — no separate process needed | Local dev, quick testing |
 | `a2a` | Each agent runs as an independent process; Coordinator sends real A2A JSON-RPC 2.0 requests | Demo, showcasing the full protocol |
 
+## Quick Demo
+
+Start the system and try this prompt:
+
+> **"Plan me a 4-day Tokyo trip, budget $1000, 2 people, interested in temples and local food"**
+
+You'll see the Coordinator's agentic loop in real time:
+1. Attractions specialist searches for temple districts and food areas
+2. Accommodation specialist finds hotels near the attraction zones  
+3. Transportation specialist maps out transit options between locations
+4. Coordinator synthesises a complete itinerary
+
 ## Features
 
+- **Agentic Orchestrator** — LLM-driven dispatch via tool use; agents called dynamically, not hardcoded
 - **A2A Protocol** — Agents expose `/.well-known/agent-card.json` for capability discovery; communication follows the A2A JSON-RPC 2.0 spec
-- **Multi-provider LLM** — Switch between Anthropic (Claude) and Google (Gemini) from the UI; provider is passed as request metadata, no server restart needed
-- **Configurable prompts** — Edit system/user prompts for each agent in the Settings page; stored in `localStorage`, applied on every request
-- **Graceful degradation** — If a sub-agent is unavailable, the Coordinator falls back to a direct LLM response instead of failing
-- **Web UI** — React + Vite chat interface with real-time status and a prompt/provider settings page
+- **Real web data** — Tavily Search MCP integration fetches live attraction, hotel, and transit information
+- **SSE streaming** — Real-time progress display as each specialist is consulted
+- **Multi-provider LLM** — Switch between Anthropic (Claude) and Google (Gemini) from the UI; no server restart needed
+- **Configurable prompts** — Edit system prompts for each agent in the Settings page
+- **Graceful degradation** — If a specialist is unavailable, the Coordinator continues with available data
 
 ## Getting Started
 
@@ -48,6 +66,7 @@ Each sub-agent supports two modes, switchable via environment variable:
 
 - Node.js 18+
 - An API key for Anthropic or Gemini (at least one)
+- (Optional) A [Tavily](https://tavily.com) API key for real web search
 
 ### 1. Install dependencies
 
@@ -62,21 +81,24 @@ cd web && npm install && cd ..
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your key:
+Edit `.env` and fill in your keys:
 
 ```env
 # Pick one (or both)
 ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
 
-# Set which provider to use by default (anthropic | gemini)
+# Default provider (anthropic | gemini)
 LLM_PROVIDER=anthropic
+
+# Optional — enables real web search for attractions/hotels/transit
+TAVILY_API_KEY=tvly-...
 ```
 
 ### 3. Start
 
 ```bash
-# Start everything: coordinator + both sub-agents + web UI
+# Start everything: coordinator + all sub-agents + web UI
 npm run dev:all
 
 # Backend only (no web UI)
@@ -90,46 +112,48 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## Running in A2A mode
 
-To exercise the real A2A protocol (each agent as a separate process):
+To exercise the real A2A protocol (each agent as an independent process):
 
 ```env
 ATTRACTIONS_MODE=a2a
 ACCOMMODATION_MODE=a2a
+TRANSPORTATION_MODE=a2a
 ```
 
-Then `npm run dev:all` will start all three backend processes. The Coordinator will discover and call sub-agents via JSON-RPC 2.0 over HTTP.
+Then `npm run dev:all` starts all four processes. The Coordinator discovers and calls each sub-agent via JSON-RPC 2.0 over HTTP.
 
 ## Project Structure
 
 ```
 src/
 ├── agents/
-│   ├── coordinatorExecutor.ts   # Orchestration logic
+│   ├── coordinatorExecutor.ts   # Agentic loop orchestration
 │   ├── attractionsAgent.ts      # Attractions AgentExecutor
-│   └── accommodationAgent.ts    # Accommodation AgentExecutor
+│   ├── accommodationAgent.ts    # Accommodation AgentExecutor
+│   └── transportationAgent.ts   # Transportation AgentExecutor
 ├── servers/
 │   ├── attractionsServer.ts     # Express server :3001
-│   └── accommodationServer.ts   # Express server :3002
+│   ├── accommodationServer.ts   # Express server :3002
+│   └── transportationServer.ts  # Express server :3003
 ├── services/
-│   ├── llmClient.ts             # AnthropicClient / GeminiClient / factory
+│   ├── llmClient.ts             # AnthropicClient / GeminiClient / factory + tool use
 │   ├── agentRegistry.ts         # Agent registration, health checks, A2A calls
-│   ├── promptStore.ts           # config/prompts.json read/write
+│   ├── promptStore.ts           # docs/prompts/*.md hot-reload
+│   ├── tavilyMCPClient.ts       # Tavily Search MCP client (singleton)
 │   └── taskStore.ts             # In-memory task state
-├── types/
-├── utils/
-│   └── agentCard.ts
 └── index.ts                     # Coordinator entry point
 
 web/
 ├── src/
 │   ├── pages/
-│   │   ├── ChatPage.tsx         # Conversation UI
+│   │   ├── ChatPage.tsx         # Conversation UI with agentic progress display
 │   │   └── SettingsPage.tsx     # Prompt editor + provider selector
 │   └── App.tsx
 └── vite.config.ts               # Proxies /api and /message to :3000
 
-config/
-└── prompts.json                 # Default prompts for all agents
+docs/
+├── prompts/                     # System prompts for all agents (.md, hot-reloaded)
+└── 05-agentic-orchestrator.md   # Architecture design doc for Phase 5
 ```
 
 ## Environment Variables
@@ -141,10 +165,14 @@ config/
 | `ANTHROPIC_MODEL` | Claude model ID | `claude-haiku-4-5-20251001` |
 | `GEMINI_API_KEY` | Google Gemini API key | — |
 | `GEMINI_MODEL` | Gemini model ID | `gemini-2.0-flash` |
+| `TAVILY_API_KEY` | Tavily Search API key (optional) | — |
 | `ATTRACTIONS_MODE` | `api` or `a2a` | `api` |
 | `ACCOMMODATION_MODE` | `api` or `a2a` | `api` |
+| `TRANSPORTATION_MODE` | `api` or `a2a` | `api` |
 | `ATTRACTIONS_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3001` |
 | `ACCOMMODATION_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3002` |
+| `TRANSPORTATION_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3003` |
+| `TRANSPORTATION_PORT` | Transportation agent port | `3003` |
 | `PORT` | Coordinator port | `3000` |
 
 ## API Endpoints (Coordinator)
@@ -153,8 +181,29 @@ config/
 |----------|-------------|
 | `GET  /.well-known/agent-card.json` | A2A agent discovery |
 | `POST /message/send` | Send a message (synchronous) |
+| `POST /message/stream` | Send a message (SSE streaming) |
 | `GET  /api/prompts` | Get current prompt configuration |
 | `PUT  /api/prompts` | Update prompt configuration |
+| `GET  /health` | Health check |
+
+## Troubleshooting
+
+**Ports already in use**
+```bash
+npm run kill-ports
+```
+
+**`ANTHROPIC_API_KEY` / `GEMINI_API_KEY` missing**  
+The server will start but requests will fail. Check your `.env` file and restart with `npm run dev:all`.
+
+**Sub-agents not responding (a2a mode)**  
+Make sure you've set `ATTRACTIONS_MODE=a2a` etc. and that `npm run dev:all` started all four processes. Check each agent's health: `curl http://localhost:3001/health`
+
+**Tavily search not working**  
+Tavily is optional. Without `TAVILY_API_KEY`, agents fall back to LLM knowledge. Add the key to `.env` and restart.
+
+**Web UI shows blank page**  
+Make sure you ran `npm install` inside the `web/` directory, and that the coordinator is running on `:3000`.
 
 ## Roadmap
 
@@ -162,10 +211,12 @@ config/
 - [x] Phase 1 — Real A2A sub-agents with agent-card and health endpoints
 - [x] Phase 1.5 — React web UI (chat + settings)
 - [x] Phase 1.6 — Multi-provider LLM support (Anthropic + Gemini)
-- [ ] Phase 2 — MCP tool integration (Tavily Search, Google Calendar)
-- [ ] Phase 3 — SSE streaming for real-time agent progress
-- [ ] Phase 4 — Retry logic and cost tracking
-- [ ] Phase 5 — Demo polish (architecture diagram, demo GIF)
+- [x] Phase 2 — MCP tool integration (Tavily Search for real attraction + hotel data)
+- [x] Phase 3 — SSE streaming for real-time agent progress
+- [x] Phase 3.5 — Transportation Agent + intent classification + prompt hot-reload
+- [x] Phase 4 — Retry logic with exponential backoff; unified prompt system
+- [x] Phase 5 — Agentic Orchestrator: LLM tool use drives agent dispatch
+- [x] Phase 6 — Polish & demo readiness
 
 ## License
 

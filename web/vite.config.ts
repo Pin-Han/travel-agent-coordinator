@@ -6,10 +6,25 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // 所有 /api 請求轉發到 coordinator
-      "/api": "http://localhost:3000",
-      // A2A 端點也代理，讓 Chat 頁面可直接打
-      "/message": "http://localhost:3000",
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+      // A2A SDK v0.3.1 handles all JSON-RPC at POST /
+      // Rewrite /message/send → / so the frontend can use a meaningful path
+      "/message/send": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        rewrite: () => "/",
+        timeout: 120000,
+        proxyTimeout: 120000,
+      },
+      // SSE streaming — no timeout, let the connection stay open
+      "/message/stream": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        rewrite: () => "/",
+      },
     },
   },
 });

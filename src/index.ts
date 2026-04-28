@@ -84,7 +84,7 @@ async function main() {
       `[TravelAgent] Server using new framework started on http://localhost:${PORT}`
     );
     console.log(
-      `[TravelAgent] Agent Card: http://localhost:${PORT}/.well-known/agent-card.json`
+      `[TravelAgent] Agent Card: http://localhost:${PORT}/.well-known/agent.json`
     );
     console.log("[TravelAgent] Press Ctrl+C to stop the server");
   });

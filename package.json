@@ -9,13 +9,15 @@
     "start": "node dist/index.js",
     "start:attractions": "node dist/servers/attractionsServer.js",
     "start:accommodation": "node dist/servers/accommodationServer.js",
+    "start:transportation": "node dist/servers/transportationServer.js",
     "dev": "tsx watch src/index.ts",
     "dev:attractions": "tsx watch src/servers/attractionsServer.ts",
     "dev:accommodation": "tsx watch src/servers/accommodationServer.ts",
+    "dev:transportation": "tsx watch src/servers/transportationServer.ts",
     "dev:web": "cd web && npm run dev",
-    "kill-ports": "for port in 3000 3001 3002 5173; do pid=$(lsof -ti tcp:$port 2>/dev/null); [ -n \"$pid\" ] && kill -9 $pid && echo \"killed :$port\"; done",
-    "dev:all": "concurrently --names \"coordinator,attractions,accommodation,web\" --prefix-colors \"blue,green,yellow,magenta\" \"npm run dev\" \"npm run dev:attractions\" \"npm run dev:accommodation\" \"npm run dev:web\"",
-    "dev:agents": "concurrently --names \"coordinator,attractions,accommodation\" --prefix-colors \"blue,green,yellow\" \"npm run dev\" \"npm run dev:attractions\" \"npm run dev:accommodation\"",
+    "kill-ports": "for port in 3000 3001 3002 3003 5173; do pid=$(lsof -ti tcp:$port 2>/dev/null); [ -n \"$pid\" ] && kill -9 $pid && echo \"killed :$port\"; done",
+    "dev:all": "concurrently --names \"coordinator,attractions,accommodation,transportation,web\" --prefix-colors \"blue,green,yellow,cyan,magenta\" \"npm run dev\" \"npm run dev:attractions\" \"npm run dev:accommodation\" \"npm run dev:transportation\" \"npm run dev:web\"",
+    "dev:agents": "concurrently --names \"coordinator,attractions,accommodation,transportation\" --prefix-colors \"blue,green,yellow,cyan\" \"npm run dev\" \"npm run dev:attractions\" \"npm run dev:accommodation\" \"npm run dev:transportation\"",
     "clean": "rm -rf dist"
   },
   "keywords": [

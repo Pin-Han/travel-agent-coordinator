@@ -8,280 +8,374 @@ import {
   TaskArtifactUpdateEvent,
   Task,
   Message,
-  TextPart,
 } from "@a2a-js/sdk";
 import { v4 as uuidv4 } from "uuid";
 
-import { createLLMClient, LLMProvider } from "../services/llmClient.js";
+import {
+  createLLMClient,
+  LLMProvider,
+  LLMMessage,
+  LLMContentBlock,
+  ToolUseBlock,
+  TextBlock,
+  ToolResultContent,
+  ToolDefinition,
+} from "../services/llmClient.js";
 import { getPrompts } from "../services/promptStore.js";
 import { AgentRegistryService } from "../services/agentRegistry.js";
 import { TaskStoreService } from "../services/taskStore.js";
 import { CoordinatorConfig } from "../types/index.js";
 
-// Simple store for contexts - following movie agent pattern
+// Per-context A2A conversation history
 const contexts: Map<string, Message[]> = new Map();
+
+const MAX_LOOP_TURNS = 10;
+const AGENT_TIMEOUT_MS = 90_000;
 
 export class TravelCoordinatorExecutor implements AgentExecutor {
   private agentRegistry: AgentRegistryService;
   private taskStore: TaskStoreService;
-  private activeTasks: Set<string> = new Set();
   private cancelledTasks: Set<string> = new Set();
 
   constructor(_config: CoordinatorConfig) {
     this.agentRegistry = new AgentRegistryService();
     this.taskStore = new TaskStoreService();
-
     console.log("🚀 Travel Coordinator Executor 初始化完成");
   }
 
-  /**
-   * 取消任務
-   */
-  async cancelTask(
-    taskId: string,
-    _eventBus: ExecutionEventBus
-  ): Promise<void> {
+  async cancelTask(taskId: string, _eventBus: ExecutionEventBus): Promise<void> {
     console.log(`🚫 取消協調任務: ${taskId}`);
-
     this.cancelledTasks.add(taskId);
-    this.activeTasks.delete(taskId);
     this.taskStore.cancelTask(taskId, "用戶取消");
   }
 
-  /**
-   * 執行協調任務 - 遵循官方 A2A 模式
-   */
-  async execute(
-    requestContext: RequestContext,
-    eventBus: ExecutionEventBus
-  ): Promise<void> {
+  async execute(requestContext: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
     const userMessage = requestContext.userMessage;
-    const existingTask = requestContext.task;
-
-    // Determine IDs for the task and context
     const taskId = requestContext.taskId;
     const contextId = requestContext.contextId;
 
-    console.log(
-      `[TravelCoordinatorExecutor] Processing message ${userMessage.messageId} for task ${taskId} (context: ${contextId})`
-    );
+    console.log(`[Coordinator] Processing message ${userMessage.messageId} for task ${taskId} (context: ${contextId})`);
 
-    // 1. Publish initial Task event if it's a new task
-    if (!existingTask) {
+    // Publish initial Task if new
+    if (!requestContext.task) {
       const initialTask: Task = {
         kind: "task",
         id: taskId,
-        contextId: contextId,
-        status: {
-          state: "submitted",
-          timestamp: new Date().toISOString(),
-        },
-        history: [userMessage], // Start history with the current user message
-        metadata: userMessage.metadata, // Carry over metadata from message if any
-        artifacts: [], // Initialize artifacts array
+        contextId,
+        status: { state: "submitted", timestamp: new Date().toISOString() },
+        history: [userMessage],
+        metadata: userMessage.metadata,
+        artifacts: [],
       };
       eventBus.publish(initialTask);
     }
 
-    // 2. Publish "working" status update
-    const workingStatusUpdate: TaskStatusUpdateEvent = {
+    // Working status
+    eventBus.publish({
       kind: "status-update",
-      taskId: taskId,
-      contextId: contextId,
+      taskId,
+      contextId,
       status: {
         state: "working",
         message: {
           kind: "message",
           role: "agent",
           messageId: uuidv4(),
-          parts: [
-            { kind: "text", text: "正在分析您的旅遊需求，聯絡專業團隊..." },
-          ],
-          taskId: taskId,
-          contextId: contextId,
+          parts: [{ kind: "text", text: "Analysing your travel request..." }],
+          taskId,
+          contextId,
         },
         timestamp: new Date().toISOString(),
       },
       final: false,
-    };
-    eventBus.publish(workingStatusUpdate);
+    } as TaskStatusUpdateEvent);
 
-    // 3. Prepare context history like movie agent
-    const historyForCoordination = contexts.get(contextId) || [];
-    if (
-      !historyForCoordination.find((m) => m.messageId === userMessage.messageId)
-    ) {
-      historyForCoordination.push(userMessage);
+    // Build per-context A2A history
+    const history = contexts.get(contextId) ?? [];
+    if (!history.find((m) => m.messageId === userMessage.messageId)) {
+      history.push(userMessage);
     }
-    contexts.set(contextId, historyForCoordination);
+    contexts.set(contextId, history);
 
-    // 4. Extract user text and optional prompt overrides from message
     const userText = this.extractTextFromMessage(userMessage);
     const promptOverrides = (userMessage.metadata as any)?.prompts;
     const provider = (userMessage.metadata as any)?.provider as LLMProvider | undefined;
 
     if (!userText) {
-      console.warn(
-        `[TravelCoordinatorExecutor] No valid text message found in history for task ${taskId}.`
-      );
-      const failureUpdate: TaskStatusUpdateEvent = {
+      eventBus.publish({
         kind: "status-update",
-        taskId: taskId,
-        contextId: contextId,
+        taskId,
+        contextId,
         status: {
           state: "failed",
           message: {
             kind: "message",
             role: "agent",
             messageId: uuidv4(),
-            parts: [{ kind: "text", text: "找不到有效的旅遊需求描述。" }],
-            taskId: taskId,
-            contextId: contextId,
+            parts: [{ kind: "text", text: "No travel request text found." }],
+            taskId,
+            contextId,
           },
           timestamp: new Date().toISOString(),
         },
         final: true,
-      };
-      eventBus.publish(failureUpdate);
+      } as TaskStatusUpdateEvent);
       eventBus.finished();
       return;
     }
 
     try {
-      // 5. Process travel coordination
-      await this.processCoordination(
+      await this.processCoordination(taskId, contextId, eventBus, history, promptOverrides, provider);
+    } catch (error: any) {
+      console.error(`[Coordinator] Error in task ${taskId}:`, error);
+      eventBus.publish({
+        kind: "status-update",
         taskId,
         contextId,
-        userText,
-        eventBus,
-        historyForCoordination,
-        promptOverrides,
-        provider
-      );
-    } catch (error: any) {
-      console.error(
-        `[TravelCoordinatorExecutor] Error processing task ${taskId}:`,
-        error
-      );
-      const errorUpdate: TaskStatusUpdateEvent = {
-        kind: "status-update",
-        taskId: taskId,
-        contextId: contextId,
         status: {
           state: "failed",
           message: {
             kind: "message",
             role: "agent",
             messageId: uuidv4(),
-            parts: [{ kind: "text", text: `旅遊協調失敗: ${error.message}` }],
-            taskId: taskId,
-            contextId: contextId,
+            parts: [{ kind: "text", text: "I encountered an issue while planning your trip. Please try again with a more specific request." }],
+            taskId,
+            contextId,
           },
           timestamp: new Date().toISOString(),
         },
         final: true,
-      };
-      eventBus.publish(errorUpdate);
+      } as TaskStatusUpdateEvent);
     } finally {
       eventBus.finished();
     }
   }
 
-  /**
-   * 協調處理主流程 (使用 A2A 協議)
-   */
+  // ─── Agentic orchestration ────────────────────────────────────────────────────
+
   private async processCoordination(
     taskId: string,
     contextId: string,
-    userText: string,
     eventBus: ExecutionEventBus,
-    historyForCoordination: Message[],
+    history: Message[],
     promptOverrides?: any,
     provider?: LLMProvider
   ): Promise<void> {
-    try {
-      console.log("🔄 開始 A2A 旅遊規劃協調...");
+    if (this.cancelledTasks.has(taskId)) {
+      this.publishStatus(taskId, contextId, "canceled", "Travel planning task cancelled.", true, eventBus);
+      return;
+    }
 
-      // 檢查任務是否被取消
-      if (this.cancelledTasks.has(taskId)) {
-        console.log(`⏹️ 任務 ${taskId} 已被取消`);
-        const cancelledUpdate: TaskStatusUpdateEvent = {
-          kind: "status-update",
-          taskId,
-          contextId,
-          status: {
-            state: "canceled",
-            message: {
-              kind: "message",
-              role: "agent",
-              messageId: uuidv4(),
-              parts: [{ kind: "text", text: "旅遊協調任務已取消" }],
-              taskId,
-              contextId,
-            },
-            timestamp: new Date().toISOString(),
-          },
-          final: true,
-        };
-        eventBus.publish(cancelledUpdate);
-        return;
+    await this.publishProgress(taskId, contextId, "Planning your trip...", eventBus);
+
+    const tools = this.buildToolDefinitions();
+    const systemPrompt = promptOverrides?.coordinator?.system ?? this.buildSystemPrompt();
+    const llmMessages = this.buildLLMMessages(history);
+
+    const loopResult = await this.runAgenticLoop(
+      llmMessages, tools, systemPrompt, taskId, contextId, eventBus, promptOverrides, provider
+    );
+
+    if (loopResult.type === "ask_user") {
+      // Surface clarifying question to user and end turn
+      await this.publishAskUser(taskId, contextId, loopResult.text, history, eventBus);
+      return;
+    }
+
+    // Final plan — publish artifact
+    await this.publishFinalPlan(taskId, contextId, loopResult.text, loopResult.tokenUsage, history, eventBus);
+  }
+
+  // ─── Agentic loop ─────────────────────────────────────────────────────────────
+
+  private async runAgenticLoop(
+    initialMessages: LLMMessage[],
+    tools: ToolDefinition[],
+    systemPrompt: string,
+    taskId: string,
+    contextId: string,
+    eventBus: ExecutionEventBus,
+    promptOverrides?: any,
+    provider?: LLMProvider
+  ): Promise<{
+    type: "final" | "ask_user";
+    text: string;
+    tokenUsage: { inputTokens: number; outputTokens: number; breakdown: Array<{ step: string; input: number; output: number }> };
+  }> {
+    const llmClient = createLLMClient(provider);
+    if (!llmClient.completeWithTools) {
+      throw new Error(`Provider "${llmClient.provider}" does not support tool use`);
+    }
+
+    const messages: LLMMessage[] = [...initialMessages];
+    const accumulator = { inputTokens: 0, outputTokens: 0, breakdown: [] as Array<{ step: string; input: number; output: number }> };
+
+    for (let turn = 1; turn <= MAX_LOOP_TURNS; turn++) {
+      if (this.cancelledTasks.has(taskId)) break;
+
+      console.log(`[Coordinator] Loop turn ${turn}/${MAX_LOOP_TURNS}`);
+
+      const response = await llmClient.completeWithTools(messages, tools, {
+        system: systemPrompt,
+        maxTokens: 4096,
+      });
+
+      // Accumulate orchestrator token usage
+      if (response.usage) {
+        accumulator.inputTokens  += response.usage.inputTokens;
+        accumulator.outputTokens += response.usage.outputTokens;
+        accumulator.breakdown.push({ step: `Coordinator (turn ${turn})`, input: response.usage.inputTokens, output: response.usage.outputTokens });
       }
 
-      // 步驟 1: 並行呼叫景點推薦和住宿規劃 Agents
-      await this.publishProgress(
-        taskId,
-        contextId,
-        "正在聯絡景點推薦和住宿規劃專家...",
-        eventBus
-      );
+      // Add assistant turn to conversation
+      messages.push({ role: "assistant", content: response.content });
 
-      const agentResults = await this.callTwoMainAgents(
-        userText,
-        taskId,
-        contextId,
-        eventBus,
-        promptOverrides,
-        provider
-      );
+      const toolCalls = response.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+      const textParts = response.content.filter((b): b is TextBlock  => b.type === "text");
 
-      // 檢查是否被取消
-      if (this.cancelledTasks.has(taskId)) return;
+      // No tool calls = final text answer
+      if (toolCalls.length === 0) {
+        const finalText = textParts.map((b) => b.text).join("\n").trim();
+        return { type: "final", text: finalText || "Travel plan complete.", tokenUsage: accumulator };
+      }
 
-      // 步驟 2: 使用協調 AI 整合結果
-      await this.publishProgress(
-        taskId,
-        contextId,
-        "正在整合所有專家建議...",
-        eventBus
-      );
+      // Execute tool calls sequentially
+      const toolResults: ToolResultContent[] = [];
 
-      await this.handleFinalResult(
-        taskId,
-        contextId,
-        agentResults,
-        userText,
-        eventBus,
-        historyForCoordination,
-        promptOverrides,
-        provider
-      );
-    } catch (error) {
-      throw new Error(
-        `協調處理失敗: ${error instanceof Error ? error.message : "未知錯誤"}`
-      );
+      for (const toolCall of toolCalls) {
+        if (toolCall.name === "ask_user") {
+          const question: string = (toolCall.input as any).question ?? "Could you provide more details?";
+          return { type: "ask_user", text: question, tokenUsage: accumulator };
+        }
+
+        if (toolCall.name === "call_agent") {
+          const { agent_id, request, context } = toolCall.input as { agent_id: string; request: string; context?: string };
+          const enrichedRequest = context ? `${request}\n\nAdditional context:\n${context}` : request;
+
+          await this.publishProgress(taskId, contextId, `Consulting ${agent_id} specialist...`, eventBus);
+
+          const agentResult = await this.agentRegistry.callAgentAPI(
+            agent_id,
+            "process_request",
+            {
+              request: enrichedRequest,
+              provider,
+              promptOverride: promptOverrides?.[agent_id],
+            },
+            AGENT_TIMEOUT_MS
+          );
+
+          // Accumulate sub-agent token usage
+          if (agentResult.data?.tokenUsage) {
+            const tu = agentResult.data.tokenUsage;
+            accumulator.inputTokens  += tu.inputTokens  ?? 0;
+            accumulator.outputTokens += tu.outputTokens ?? 0;
+            accumulator.breakdown.push({ step: `${agent_id} specialist`, input: tu.inputTokens ?? 0, output: tu.outputTokens ?? 0 });
+          }
+
+          const resultText = agentResult.success
+            ? (agentResult.data?.response ?? "Agent responded with no content.")
+            : `The ${agent_id} specialist is temporarily unavailable. Please continue planning based on available information.`;
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolCall.id,
+            tool_name: toolCall.name,
+            content: resultText,
+          });
+        }
+      }
+
+      // Feed tool results back to the LLM
+      messages.push({ role: "user", content: toolResults });
     }
+
+    // Max turns reached — return whatever we have
+    console.warn(`[Coordinator] Agentic loop reached ${MAX_LOOP_TURNS}-turn limit`);
+    return {
+      type: "final",
+      text: "I've gathered enough information to create your travel plan. Here's what I have so far — feel free to ask for more details on any section.",
+      tokenUsage: accumulator,
+    };
+  }
+
+  // ─── Tool definitions ─────────────────────────────────────────────────────────
+
+  private buildToolDefinitions(): ToolDefinition[] {
+    const agents = this.agentRegistry.getAllAgents();
+    const agentEnum = agents.map((a) => a.id);
+    const agentDesc = agents.map((a) => `${a.id}: ${a.description}`).join(" | ");
+
+    return [
+      {
+        name: "ask_user",
+        description:
+          "Ask the user a clarifying question when destination or trip duration is unknown. After calling this, stop and wait for the user's reply.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            question: { type: "string", description: "The clarifying question to ask the user" },
+          },
+          required: ["question"],
+        },
+      },
+      {
+        name: "call_agent",
+        description: `Call a specialist travel agent by ID to get expert recommendations. Available agents — ${agentDesc}`,
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            agent_id: {
+              type: "string",
+              enum: agentEnum,
+              description: agentDesc,
+            },
+            request: {
+              type: "string",
+              description: "The full travel request to pass to the agent",
+            },
+            context: {
+              type: "string",
+              description:
+                "Additional context from previous agent results (e.g. attraction areas, accommodation location) to help this agent produce more relevant results",
+            },
+          },
+          required: ["agent_id", "request"],
+        },
+      },
+    ];
+  }
+
+  private buildSystemPrompt(): string {
+    const { coordinator } = getPrompts();
+    const agents = this.agentRegistry.getAllAgents();
+    const agentDescriptions = agents
+      .map((a) => `[${a.id}]\nDescription: ${a.description}\nCapabilities: ${a.capabilities.join(", ")}`)
+      .join("\n\n");
+    return `${coordinator.system}\n\nAvailable specialist agents:\n${agentDescriptions}`;
   }
 
   /**
-   * 發布進度更新
+   * Convert A2A Message history into LLM conversation messages.
+   * Each previous user and agent message becomes one LLMMessage.
    */
-  private async publishProgress(
-    taskId: string,
-    contextId: string,
-    message: string,
-    eventBus: ExecutionEventBus
-  ): Promise<void> {
-    const progressEvent: TaskStatusUpdateEvent = {
+  private buildLLMMessages(history: Message[]): LLMMessage[] {
+    return history
+      .map((msg): LLMMessage | null => {
+        const text = this.extractTextFromMessage(msg);
+        if (!text) return null;
+        return {
+          role: msg.role === "agent" ? "assistant" : "user",
+          content: text,
+        };
+      })
+      .filter((m): m is LLMMessage => m !== null);
+  }
+
+  // ─── A2A event publishing ─────────────────────────────────────────────────────
+
+  private async publishProgress(taskId: string, contextId: string, message: string, eventBus: ExecutionEventBus): Promise<void> {
+    eventBus.publish({
       kind: "status-update",
       taskId,
       contextId,
@@ -298,63 +392,102 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
         timestamp: new Date().toISOString(),
       },
       final: false,
-    };
-
-    eventBus.publish(progressEvent);
+    } as TaskStatusUpdateEvent);
   }
 
-  /**
-   * 處理最終結果
-   */
-  private async handleFinalResult(
+  private publishStatus(
     taskId: string,
     contextId: string,
-    allResults: any,
-    userText: string,
-    eventBus: ExecutionEventBus,
-    historyForCoordination: Message[],
-    promptOverrides?: any,
-    provider?: LLMProvider
+    state: "completed" | "canceled" | "failed",
+    text: string,
+    final: boolean,
+    eventBus: ExecutionEventBus
+  ): void {
+    const msg: Message = {
+      kind: "message",
+      role: "agent",
+      messageId: uuidv4(),
+      parts: [{ kind: "text", text }],
+      taskId,
+      contextId,
+    };
+    eventBus.publish({
+      kind: "status-update",
+      taskId,
+      contextId,
+      status: { state, message: msg, timestamp: new Date().toISOString() },
+      final,
+    } as TaskStatusUpdateEvent);
+  }
+
+  private async publishAskUser(
+    taskId: string,
+    contextId: string,
+    question: string,
+    history: Message[],
+    eventBus: ExecutionEventBus
   ): Promise<void> {
-    console.log("🎉 協調完成，生成最終結果");
-
-    let summary = "旅遊規劃完成";
-
-    // 檢查是否有有效的 Agent 回應
-    const hasValidResults = this.hasValidAgentResults(allResults);
-
-    if (hasValidResults) {
-      // 有有效結果，使用 LLM 整合各 Agent 的回應
-      try {
-        summary = await this.integrateAgentResults(userText, allResults, promptOverrides?.coordinator, provider);
-      } catch (coordinationError) {
-        console.warn("協調整合失敗，使用增強型總結:", coordinationError);
-        summary = this.generateEnhancedSummary(allResults, userText);
-      }
-    } else {
-      // 所有 Agent 都失敗，Coordinator 直接由 LLM 回應
-      console.log("⚠️ 所有專家服務暫時無法使用，由協調專家直接提供建議");
-      summary = await this.generateDirectCoordinatorResponse(userText, provider);
-    }
-
-    // 創建結果文件
-    const artifactId = uuidv4();
-    const artifact = {
-      artifactId,
-      name: "travel_plan.md",
-      description: "完整旅遊規劃",
-      parts: [
-        {
-          kind: "text" as const,
-          text: summary,
-        },
-      ],
+    const agentMsg: Message = {
+      kind: "message",
+      role: "agent",
+      messageId: uuidv4(),
+      parts: [{ kind: "text", text: question }],
+      taskId,
+      contextId,
     };
 
-    // 添加到任務記錄
-    this.taskStore.addTaskArtifact(taskId, artifact);
+    // Store in history so next execute() sees the Q&A context
+    history.push(agentMsg);
+    contexts.set(contextId, history);
 
-    // 發布結果文件
+    // Publish the question as an artifact (frontend renders artifact content)
+    const artifactEvent: TaskArtifactUpdateEvent = {
+      kind: "artifact-update",
+      taskId,
+      contextId,
+      artifact: {
+        artifactId: uuidv4(),
+        name: "clarification.md",
+        description: "Clarifying question",
+        parts: [{ kind: "text" as const, text: question }],
+      },
+      append: false,
+      lastChunk: true,
+    };
+    eventBus.publish(artifactEvent);
+
+    // Completed status — frontend treats this the same as a regular reply
+    eventBus.publish({
+      kind: "status-update",
+      taskId,
+      contextId,
+      status: { state: "completed", message: agentMsg, timestamp: new Date().toISOString() },
+      final: true,
+    } as TaskStatusUpdateEvent);
+  }
+
+  private async publishFinalPlan(
+    taskId: string,
+    contextId: string,
+    finalText: string,
+    tokenUsage: { inputTokens: number; outputTokens: number; breakdown: any[] },
+    history: Message[],
+    eventBus: ExecutionEventBus
+  ): Promise<void> {
+    const artifact = {
+      artifactId: uuidv4(),
+      name: "travel_plan.md",
+      description: "Complete travel plan",
+      parts: [{ kind: "text" as const, text: finalText }],
+      metadata: { tokenUsage },
+    };
+
+    try {
+      this.taskStore.addTaskArtifact(taskId, artifact);
+    } catch {
+      // Task may not be in local store if using A2A standard flow
+    }
+
     const artifactEvent: TaskArtifactUpdateEvent = {
       kind: "artifact-update",
       taskId,
@@ -363,462 +496,50 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
       append: false,
       lastChunk: true,
     };
-
     eventBus.publish(artifactEvent);
 
-    // 更新任務狀態為完成 (如果任務存在)
-    try {
-      this.taskStore.updateTaskStatus(taskId, {
-        state: "completed",
-        message: "旅遊規劃已完成",
-      });
-    } catch (error) {
-      // 任務可能不存在於我們的本地存儲中，這在使用 A2A 標準流程時是正常的
-      console.log(`📝 任務 ${taskId} 狀態更新跳過 (使用 A2A 標準流程)`);
-    }
-
-    // Create agent response message and add to context - following movie agent pattern
-    const agentMessage: Message = {
+    const agentMsg: Message = {
       kind: "message",
       role: "agent",
       messageId: uuidv4(),
-      parts: [
-        {
-          kind: "text",
-          text: "✅ 旅遊規劃已完成！請查看生成的旅遊計劃。",
-        },
-      ],
-      taskId: taskId,
-      contextId: contextId,
+      parts: [{ kind: "text", text: finalText }],
+      taskId,
+      contextId,
     };
-    historyForCoordination.push(agentMessage);
-    contexts.set(contextId, historyForCoordination);
+    history.push(agentMsg);
+    contexts.set(contextId, history);
 
-    // 發布最終狀態更新
-    const finalEvent: TaskStatusUpdateEvent = {
+    eventBus.publish({
       kind: "status-update",
       taskId,
       contextId,
-      status: {
-        state: "completed",
-        message: agentMessage,
-        timestamp: new Date().toISOString(),
-      },
+      status: { state: "completed", message: agentMsg, timestamp: new Date().toISOString() },
       final: true,
-    };
-
-    eventBus.publish(finalEvent);
+    } as TaskStatusUpdateEvent);
   }
 
-  /**
-   * 生成簡單的結果整合
-   */
-  /**
-   * 檢查是否有有效的 Agent 結果
-   */
-  private hasValidAgentResults(allResults: any): boolean {
-    return (
-      allResults.attractions?.success === true ||
-      allResults.accommodation?.success === true
-    );
-  }
+  // ─── Utilities ────────────────────────────────────────────────────────────────
 
-  /**
-   * 生成增強型總結
-   */
-  private generateEnhancedSummary(
-    allResults: any,
-    userRequest: string
-  ): string {
-    let summary = `# 旅遊規劃結果\n\n**用戶需求：** ${userRequest}\n\n`;
-
-    // 處理景點推薦結果
-    if (allResults.attractions?.success) {
-      summary += `## 🗺️ 景點推薦\n`;
-      try {
-        const attractionsData = allResults.attractions.data;
-        if (attractionsData) {
-          summary += `✅ 已為您精選優質景點和美食推薦\n\n`;
-        }
-      } catch (error) {
-        summary += `✅ 景點推薦專家已提供建議\n\n`;
-      }
-    } else {
-      summary += `## 🗺️ 景點推薦\n⚠️ 景點推薦服務暫時無法使用，建議稍後再試\n\n`;
-    }
-
-    // 處理住宿規劃結果
-    if (allResults.accommodation?.success) {
-      summary += `## 🏨 住宿規劃\n`;
-      try {
-        const accommodationData = allResults.accommodation.data;
-        if (accommodationData) {
-          summary += `✅ 已為您安排最佳住宿和交通方案\n\n`;
-        }
-      } catch (error) {
-        summary += `✅ 住宿規劃專家已提供建議\n\n`;
-      }
-    } else {
-      summary += `## 🏨 住宿規劃\n⚠️ 住宿規劃服務暫時無法使用，建議稍後再試\n\n`;
-    }
-
-    summary += `## 📝 溫馨提醒\n`;
-    summary += `- 以上規劃由專業旅遊專家團隊提供\n`;
-    summary += `- 如有任何問題，歡迎隨時聯繫我們\n`;
-    summary += `- 建議出發前再次確認各項安排\n\n`;
-
-    return summary;
-  }
-
-  /**
-   * 整合各 Agent 結果（使用 LLM）
-   */
-  private async integrateAgentResults(
-    userRequest: string,
-    allResults: any,
-    coordinatorOverride?: any,
-    provider?: LLMProvider
-  ): Promise<string> {
-    const { coordinator } = getPrompts();
-    const merged = { ...coordinator, ...coordinatorOverride };
-    const attractionsText =
-      allResults.attractions?.data?.response || "景點資料無法取得";
-    const accommodationText =
-      allResults.accommodation?.data?.response || "住宿資料無法取得";
-
-    const prompt = merged.integration
-      .replace("{request}", userRequest)
-      .replace("{attractions}", attractionsText)
-      .replace("{accommodation}", accommodationText);
-
-    const llmClient = createLLMClient(provider);
-    return await llmClient.complete(prompt, {
-      system: merged.system,
-      maxTokens: 2048,
-    });
-  }
-
-  /**
-   * 當所有 Agent 都失敗時，Coordinator 直接以 LLM 回應
-   */
-  private async generateDirectCoordinatorResponse(
-    userRequest: string,
-    provider?: LLMProvider
-  ): Promise<string> {
-    console.log("🤖 協調專家正在直接處理請求...");
-    try {
-      const { coordinator } = getPrompts();
-      const prompt = coordinator.fallback.replace("{request}", userRequest);
-      const llmClient = createLLMClient(provider);
-      return await llmClient.complete(prompt, {
-        system: coordinator.system,
-        maxTokens: 2048,
-      });
-    } catch (error) {
-      console.warn("LLM 直接回應失敗:", error);
-      return this.generateFallbackResponse(userRequest);
-    }
-  }
-
-  /**
-   * 最終備用回應
-   */
-  private generateFallbackResponse(userRequest: string): string {
-    const travelInfo = this.extractTravelInfo(userRequest);
-
-    return `# 旅遊規劃建議
-
-**您的需求：** ${userRequest}
-
-## 🌟 基本建議
-
-### 📍 目的地：${travelInfo.destination}
-建議您：
-- 提前規劃行程，預訂熱門景點門票
-- 選擇交通便利的住宿地點
-- 準備適合當地天氣的服裝
-- 下載相關旅遊APP，如地圖、翻譯等
-
-### 💰 預算規劃
-- 建議預留10-20%的額外預算作為應急基金
-- 可考慮購買旅遊保險
-- 記錄重要開支，便於後續整理
-
-### 🚇 交通建議
-- 優先考慮大眾運輸工具
-- 下載當地交通APP
-- 購買交通一日券或套票
-
-## ⚠️ 服務說明
-目前我們的專業旅遊顧問團隊暫時忙碌中，以上為基本建議。
-建議您稍後再次嘗試，我們將為您提供更詳細的個人化規劃。
-
-感謝您的理解與耐心！`;
-  }
-
-  private generateSimpleSummary(allResults: any, userText: string): string {
-    const { attractions, accommodation, budget } = allResults;
-
-    let summary = `# 旅遊規劃結果\n\n**用戶需求：** ${userText}\n\n`;
-
-    if (attractions?.success && attractions.data?.response) {
-      summary += `## 🏞️ 景點推薦\n${attractions.data.response}\n\n`;
-    }
-
-    if (accommodation?.success && accommodation.data?.response) {
-      summary += `## 🏨 住宿與交通\n${accommodation.data.response}\n\n`;
-    }
-
-    if (budget?.success && budget.data?.summary) {
-      summary += `## 💰 預算分析\n${budget.data.summary}\n\n`;
-    }
-
-    summary += `## 📝 規劃完成\n感謝您使用我們的旅遊規劃服務！如有任何問題，請隨時聯繫。`;
-
-    return summary;
-  }
-
-  /**
-   * 呼叫主要 Agents：景點推薦和住宿規劃（帶健康檢查）
-   */
-  private async callTwoMainAgents(
-    userText: string,
-    taskId: string,
-    contextId: string,
-    eventBus: ExecutionEventBus,
-    promptOverrides?: any,
-    provider?: LLMProvider
-  ): Promise<Record<string, any>> {
-    const agentResults: Record<string, any> = {};
-    const AGENT_TIMEOUT = 15000; // 15秒超時
-
-    // 提取基本旅遊資訊
-    const travelInfo = this.extractTravelInfo(userText);
-
-    // 檢查 Agent 健康狀態
-    const agentsToCall: Array<{
-      id: string;
-      name: string;
-      promise: Promise<any>;
-    }> = [];
-
-    // ── Step 1: Attractions Agent ────────────────────────────────────────────
-    const attractionsHealthy = await this.agentRegistry.checkAgentHealth("attractions");
-
-    if (!attractionsHealthy) {
-      console.warn("⚠️ 景點推薦 Agent 健康檢查失敗，跳過");
-      agentResults.attractions = { success: false, error: "景點推薦服務健康檢查失敗", skipped: true };
-    } else {
-      await this.publishProgress(taskId, contextId, "正在諮詢景點推薦專家（透過 Tavily 搜尋真實資料）...", eventBus);
-      console.log("✅ 景點推薦 Agent 健康檢查通過，開始呼叫");
-
-      try {
-        agentResults.attractions = await this.callSingleAgent(
-          "attractions", "景點推薦", userText, travelInfo, AGENT_TIMEOUT,
-          promptOverrides?.attractions, provider
-        );
-        console.log("✅ 景點推薦專家回應完成");
-      } catch (err) {
-        console.error("❌ 景點推薦專家失敗:", err);
-        agentResults.attractions = { success: false, error: "景點推薦服務暫時無法使用", fallback: true };
-      }
-    }
-
-    // ── Step 2: Extract attraction area from result ───────────────────────────
-    const attractionArea = this.extractAttractionArea(agentResults.attractions);
-    if (attractionArea) {
-      console.log(`📍 景點集中區域：${attractionArea}（傳給住宿規劃 Agent）`);
-    }
-
-    // ── Step 3: Accommodation Agent (uses attraction area as input) ───────────
-    const accommodationHealthy = await this.agentRegistry.checkAgentHealth("accommodation");
-
-    if (!accommodationHealthy) {
-      console.warn("⚠️ 住宿規劃 Agent 健康檢查失敗，跳過");
-      agentResults.accommodation = { success: false, error: "住宿規劃服務健康檢查失敗", skipped: true };
-    } else {
-      await this.publishProgress(taskId, contextId, "正在諮詢住宿規劃專家（依據景點位置搜尋附近住宿）...", eventBus);
-      console.log("✅ 住宿規劃 Agent 健康檢查通過，開始呼叫");
-
-      try {
-        agentResults.accommodation = await this.callSingleAgent(
-          "accommodation", "住宿規劃", userText, travelInfo, AGENT_TIMEOUT,
-          promptOverrides?.accommodation, provider, attractionArea
-        );
-        console.log("✅ 住宿規劃專家回應完成");
-      } catch (err) {
-        console.error("❌ 住宿規劃專家失敗:", err);
-        agentResults.accommodation = { success: false, error: "住宿規劃服務暫時無法使用", fallback: true };
-      }
-    }
-
-    return agentResults;
-  }
-
-  /**
-   * 呼叫單一 Agent（api 模式走直接 LLM，a2a 模式走 A2A JSON-RPC 2.0）
-   * 路由邏輯已封裝在 AgentRegistryService.callAgentAPI()
-   */
-  private async callSingleAgent(
-    agentId: string,
-    agentName: string,
-    userText: string,
-    travelInfo: any,
-    timeout: number,
-    promptOverride?: any,
-    provider?: LLMProvider,
-    attractionArea?: string
-  ): Promise<any> {
-    try {
-      console.log(`🔗 呼叫 ${agentName}...`);
-      return await this.agentRegistry.callAgentAPI(
-        agentId,
-        "process_request",
-        { request: userText, ...travelInfo, promptOverride, provider, attractionArea },
-        timeout
-      );
-    } catch (error) {
-      console.error(`❌ ${agentName} 呼叫失敗:`, error);
-      throw new Error(
-        `${agentName} 無法連接: ${
-          error instanceof Error ? error.message : "未知錯誤"
-        }`
-      );
-    }
-  }
-
-  /**
-   * 提取旅遊資訊的輔助方法
-   */
-  private extractTravelInfo(text: string): any {
-    // 簡化的資訊提取邏輯
-    const info = {
-      destination: "台北", // 預設值
-      duration: 3,
-      budget: 20000,
-      preferences: ["美食", "文化"],
-      traveler_count: 2,
-    };
-
-    // 這裡可以加入更複雜的 NLP 提取邏輯
-    if (text.includes("高雄")) info.destination = "高雄";
-    if (text.includes("台中")) info.destination = "台中";
-
-    const budgetMatch = text.match(/(\d+)(?:元|萬)/);
-    if (budgetMatch) {
-      info.budget =
-        parseInt(budgetMatch[1]) * (text.includes("萬") ? 10000 : 1);
-    }
-
-    const dayMatch = text.match(/(\d+)天/);
-    if (dayMatch) {
-      info.duration = parseInt(dayMatch[1]);
-    }
-
-    return info;
-  }
-
-  /**
-   * 從景點推薦結果中提取景點集中區域（傳給住宿 Agent）
-   */
-  private extractAttractionArea(attractionsResult: any): string | undefined {
-    const text: string = attractionsResult?.data?.response || "";
-    if (!text) return undefined;
-
-    // Look for "景點地區摘要" section which the attractions prompt asks for
-    const summaryMatch = text.match(/景點地區摘要[：:]\s*([\s\S]{1,300})/);
-    if (summaryMatch) return summaryMatch[1].trim().slice(0, 200);
-
-    // Fallback: pick the first region-like phrase
-    const regionMatch = text.match(/(?:地區|區域|中城|市區|老城|新宿|澀谷|銀座)[：:\s]*([^\n]{5,50})/);
-    if (regionMatch) return regionMatch[1].trim();
-
-    return undefined;
-  }
-
-  /**
-   * 從景點推薦回應中提取景點名稱
-   */
-  private extractAttractionNames(responseText: string): string[] {
-    const attractionNames: string[] = [];
-
-    try {
-      // 嘗試解析 JSON 格式的回應
-      const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-      if (jsonMatch) {
-        const jsonData = JSON.parse(jsonMatch[1]);
-        if (jsonData.recommendations?.attractions) {
-          jsonData.recommendations.attractions.forEach((attraction: any) => {
-            if (attraction.name) {
-              attractionNames.push(attraction.name);
-            }
-          });
-        }
-      }
-
-      // 如果 JSON 解析失敗，使用簡單的文字提取
-      if (attractionNames.length === 0) {
-        const lines = responseText.split("\n");
-        lines.forEach((line) => {
-          // 簡單匹配包含常見景點關鍵字的行
-          if (
-            line.includes("景點") ||
-            line.includes("博物館") ||
-            line.includes("公園") ||
-            line.includes("寺廟") ||
-            line.includes("夜市") ||
-            line.includes("101")
-          ) {
-            const cleanLine = line.replace(/[^\u4e00-\u9fa5\w\s]/g, "").trim();
-            if (cleanLine && cleanLine.length > 2 && cleanLine.length < 20) {
-              attractionNames.push(cleanLine);
-            }
-          }
-        });
-      }
-    } catch (error) {
-      console.warn("景點名稱提取失敗:", error);
-    }
-
-    return attractionNames.slice(0, 10); // 限制最多 10 個景點
-  }
-
-  /**
-   * 從訊息中提取文字內容
-   */
   private extractTextFromMessage(message: any): string {
-    if (typeof message === "string") {
-      return message;
-    }
-
-    if (message && message.parts && Array.isArray(message.parts)) {
+    if (typeof message === "string") return message;
+    if (message?.parts && Array.isArray(message.parts)) {
       return message.parts
-        .filter((part: any) => part.kind === "text")
-        .map((part: any) => part.text)
+        .filter((p: any) => p.kind === "text")
+        .map((p: any) => p.text)
         .join(" ");
     }
-
-    return JSON.stringify(message);
+    return "";
   }
 
-  /**
-   * 獲取活躍任務統計
-   */
   getActiveTasksCount(): number {
-    return this.activeTasks.size;
+    return 0;
   }
 
-  /**
-   * 獲取任務存儲統計
-   */
   getTaskStoreStats(): any {
     return this.taskStore.getStats();
   }
 
-  /**
-   * 獲取代理健康狀態
-   */
   async getAgentsHealth(): Promise<Record<string, boolean>> {
-    return await this.agentRegistry.getAllAgentsHealth();
+    return this.agentRegistry.getAllAgentsHealth();
   }
 }

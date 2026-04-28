@@ -139,7 +139,7 @@ export class AttractionsAgentExecutor implements AgentExecutor {
     return textPart?.text || "";
   }
 
-  private async generateRecommendations(requestText: string, override?: any, provider?: LLMProvider): Promise<string> {
+  private async generateRecommendations(requestText: string, override?: any, provider?: LLMProvider): Promise<string> {  // returns text only; token usage not surfaced in a2a mode
     const { attractions } = getPrompts();
     const merged = { ...attractions, ...override };
 
@@ -159,10 +159,11 @@ export class AttractionsAgentExecutor implements AgentExecutor {
     const prompt = merged.user.replace("{request}", enrichedRequest);
 
     const llmClient = createLLMClient(provider);
-    return await llmClient.complete(prompt, {
+    const result = await llmClient.complete(prompt, {
       system: merged.system,
       maxTokens: 2000,
     });
+    return result.text;
   }
 
   private extractDestination(requestText: string): string {

@@ -13,16 +13,16 @@ import { createLLMClient, LLMProvider } from "../services/llmClient.js";
 import { getPrompts } from "../services/promptStore.js";
 import { TavilyMCPClient } from "../services/tavilyMCPClient.js";
 
-export class AccommodationAgentExecutor implements AgentExecutor {
+export class TransportationAgentExecutor implements AgentExecutor {
   constructor() {
-    console.log("[AccommodationAgent] Executor 初始化完成");
+    console.log("[TransportationAgent] Executor initialised");
   }
 
   async cancelTask(
     taskId: string,
     _eventBus: ExecutionEventBus
   ): Promise<void> {
-    console.log(`[AccommodationAgent] 取消任務: ${taskId}`);
+    console.log(`[TransportationAgent] Cancelling task: ${taskId}`);
   }
 
   async execute(
@@ -53,7 +53,14 @@ export class AccommodationAgentExecutor implements AgentExecutor {
           kind: "message",
           role: "agent",
           messageId: uuidv4(),
-          parts: [{ kind: "text", text: TavilyMCPClient.isAvailable() ? "正在透過 Tavily 搜尋景點附近住宿..." : "正在規劃住宿方案..." }],
+          parts: [
+            {
+              kind: "text",
+              text: TavilyMCPClient.isAvailable()
+                ? "Searching transit options via Tavily..."
+                : "Planning transportation routes...",
+            },
+          ],
           taskId,
           contextId,
         },
@@ -68,16 +75,21 @@ export class AccommodationAgentExecutor implements AgentExecutor {
       const promptOverride = (userMessage.metadata as any)?.promptOverride;
       const provider = (userMessage.metadata as any)?.provider as LLMProvider | undefined;
       const attractionArea = (userMessage.metadata as any)?.attractionArea as string | undefined;
-      console.log(
-        `[AccommodationAgent] 收到請求: ${requestText.slice(0, 80)}...`
-      );
+      const accommodationArea = (userMessage.metadata as any)?.accommodationArea as string | undefined;
+      console.log(`[TransportationAgent] Request: ${requestText.slice(0, 80)}...`);
 
-      const recommendations = await this.generateRecommendations(requestText, promptOverride, provider, attractionArea);
+      const recommendations = await this.generateRecommendations(
+        requestText,
+        promptOverride,
+        provider,
+        attractionArea,
+        accommodationArea
+      );
 
       const artifact = {
         artifactId: uuidv4(),
-        name: "accommodation.md",
-        description: "住宿規劃",
+        name: "transportation.md",
+        description: "Transportation plan",
         parts: [{ kind: "text" as const, text: recommendations }],
       };
 
@@ -101,7 +113,7 @@ export class AccommodationAgentExecutor implements AgentExecutor {
             kind: "message",
             role: "agent",
             messageId: uuidv4(),
-            parts: [{ kind: "text", text: "住宿規劃完成！" }],
+            parts: [{ kind: "text", text: "Transportation plan complete!" }],
             taskId,
             contextId,
           },
@@ -111,7 +123,7 @@ export class AccommodationAgentExecutor implements AgentExecutor {
       };
       eventBus.publish(completedUpdate);
     } catch (error: any) {
-      console.error("[AccommodationAgent] 執行失敗:", error);
+      console.error("[TransportationAgent] Execution failed:", error);
       const failedUpdate: TaskStatusUpdateEvent = {
         kind: "status-update",
         taskId,
@@ -122,9 +134,7 @@ export class AccommodationAgentExecutor implements AgentExecutor {
             kind: "message",
             role: "agent",
             messageId: uuidv4(),
-            parts: [
-              { kind: "text", text: `住宿規劃失敗: ${error.message}` },
-            ],
+            parts: [{ kind: "text", text: `Transportation planning failed: ${error.message}` }],
             taskId,
             contextId,
           },
@@ -148,26 +158,30 @@ export class AccommodationAgentExecutor implements AgentExecutor {
     requestText: string,
     override?: any,
     provider?: LLMProvider,
-    attractionArea?: string
-  ): Promise<string> {
-    const { accommodation } = getPrompts();
-    const merged = { ...accommodation, ...override };
+    attractionArea?: string,
+    accommodationArea?: string
+  ): Promise<string> {  // returns text only; token usage not surfaced in a2a mode
+    const { transportation } = getPrompts() as any;
+    const merged = { ...transportation, ...override };
 
-    // Search for real accommodation data near the attraction area (dependency on Attractions Agent)
+    // Search for real transit data near the attraction areas
     const tavilyClient = TavilyMCPClient.getInstance();
     const searchLocation = attractionArea || this.extractDestination(requestText);
     const searchData = await tavilyClient.search(
-      `hotels accommodation near ${searchLocation} budget travel guide`,
+      `public transit guide ${searchLocation} subway bus routes transportation tips`,
       6
     );
 
-    // Build enriched request with both attraction area context and real hotel data
+    // Build enriched request with location context from previous agents
     let enrichedRequest = requestText;
     if (attractionArea) {
-      enrichedRequest += `\n\n景點集中區域（由景點推薦 Agent 提供）：${attractionArea}`;
+      enrichedRequest += `\n\nAttraction areas (from Attractions Agent): ${attractionArea}`;
+    }
+    if (accommodationArea) {
+      enrichedRequest += `\nAccommodation location (from Accommodation Agent): ${accommodationArea}`;
     }
     if (searchData) {
-      enrichedRequest += `\n\n---\n以下是透過 Tavily 搜尋到的真實住宿資料，請參考這些資料進行規劃：\n${searchData}`;
+      enrichedRequest += `\n\n---\nReal transit data from Tavily search:\n${searchData}`;
     }
 
     const prompt = merged.user.replace("{request}", enrichedRequest);
@@ -181,7 +195,12 @@ export class AccommodationAgentExecutor implements AgentExecutor {
   }
 
   private extractDestination(requestText: string): string {
-    const match = requestText.match(/(?:去|到|前往)\s*([^\s,，。]+)/);
-    return match ? match[1] : requestText.slice(0, 30);
+    // English: "trip to Tokyo", "visit Paris"
+    const enMatch = requestText.match(/(?:trip to|visit|travel to|going to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/);
+    if (enMatch) return enMatch[1];
+    // Chinese
+    const zhMatch = requestText.match(/(?:去|到|前往)\s*([^\s,，。]+)/);
+    if (zhMatch) return zhMatch[1];
+    return requestText.slice(0, 30);
   }
 }

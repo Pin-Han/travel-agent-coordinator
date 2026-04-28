@@ -62,7 +62,9 @@ export class TavilyMCPClient {
    * Falls back gracefully if the key is missing or the call fails.
    */
   async search(query: string, maxResults: number = 5): Promise<string | null> {
-    if (!TavilyMCPClient.isAvailable()) return null;
+    const available = TavilyMCPClient.isAvailable();
+    console.log(`[MCP] search() called — available=${available} query="${query.slice(0, 50)}"`);
+    if (!available) return null;
 
     try {
       await this.ensureConnected();
