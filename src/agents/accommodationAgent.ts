@@ -11,6 +11,7 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { createLLMClient, LLMProvider } from "../services/llmClient.js";
 import { getPrompts } from "../services/promptStore.js";
+import { TavilyMCPClient } from "../services/tavilyMCPClient.js";
 
 export class AccommodationAgentExecutor implements AgentExecutor {
   constructor() {
@@ -52,7 +53,7 @@ export class AccommodationAgentExecutor implements AgentExecutor {
           kind: "message",
           role: "agent",
           messageId: uuidv4(),
-          parts: [{ kind: "text", text: "正在規劃住宿方案..." }],
+          parts: [{ kind: "text", text: TavilyMCPClient.isAvailable() ? "正在透過 Tavily 搜尋景點附近住宿..." : "正在規劃住宿方案..." }],
           taskId,
           contextId,
         },
@@ -66,11 +67,12 @@ export class AccommodationAgentExecutor implements AgentExecutor {
       const requestText = this.extractText(userMessage);
       const promptOverride = (userMessage.metadata as any)?.promptOverride;
       const provider = (userMessage.metadata as any)?.provider as LLMProvider | undefined;
+      const attractionArea = (userMessage.metadata as any)?.attractionArea as string | undefined;
       console.log(
         `[AccommodationAgent] 收到請求: ${requestText.slice(0, 80)}...`
       );
 
-      const recommendations = await this.generateRecommendations(requestText, promptOverride, provider);
+      const recommendations = await this.generateRecommendations(requestText, promptOverride, provider, attractionArea);
 
       const artifact = {
         artifactId: uuidv4(),
@@ -142,15 +144,43 @@ export class AccommodationAgentExecutor implements AgentExecutor {
     return textPart?.text || "";
   }
 
-  private async generateRecommendations(requestText: string, override?: any, provider?: LLMProvider): Promise<string> {
+  private async generateRecommendations(
+    requestText: string,
+    override?: any,
+    provider?: LLMProvider,
+    attractionArea?: string
+  ): Promise<string> {
     const { accommodation } = getPrompts();
     const merged = { ...accommodation, ...override };
-    const prompt = merged.user.replace("{request}", requestText);
+
+    // Search for real accommodation data near the attraction area (dependency on Attractions Agent)
+    const tavilyClient = TavilyMCPClient.getInstance();
+    const searchLocation = attractionArea || this.extractDestination(requestText);
+    const searchData = await tavilyClient.search(
+      `hotels accommodation near ${searchLocation} budget travel guide`,
+      6
+    );
+
+    // Build enriched request with both attraction area context and real hotel data
+    let enrichedRequest = requestText;
+    if (attractionArea) {
+      enrichedRequest += `\n\n景點集中區域（由景點推薦 Agent 提供）：${attractionArea}`;
+    }
+    if (searchData) {
+      enrichedRequest += `\n\n---\n以下是透過 Tavily 搜尋到的真實住宿資料，請參考這些資料進行規劃：\n${searchData}`;
+    }
+
+    const prompt = merged.user.replace("{request}", enrichedRequest);
 
     const llmClient = createLLMClient(provider);
     return await llmClient.complete(prompt, {
       system: merged.system,
       maxTokens: 1500,
     });
+  }
+
+  private extractDestination(requestText: string): string {
+    const match = requestText.match(/(?:去|到|前往)\s*([^\s,，。]+)/);
+    return match ? match[1] : requestText.slice(0, 30);
   }
 }

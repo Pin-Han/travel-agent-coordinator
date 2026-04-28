@@ -602,104 +602,54 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
       promise: Promise<any>;
     }> = [];
 
-    // 檢查景點推薦 Agent
-    const attractionsHealthy = await this.agentRegistry.checkAgentHealth(
-      "attractions"
-    );
-    if (attractionsHealthy) {
-      agentsToCall.push({
-        id: "attractions",
-        name: "景點推薦",
-        promise: this.callSingleAgent(
-          "attractions",
-          "景點推薦",
-          userText,
-          travelInfo,
-          AGENT_TIMEOUT,
-          promptOverrides?.attractions,
-          provider
-        ),
-      });
-      console.log("✅ 景點推薦 Agent 健康檢查通過");
+    // ── Step 1: Attractions Agent ────────────────────────────────────────────
+    const attractionsHealthy = await this.agentRegistry.checkAgentHealth("attractions");
+
+    if (!attractionsHealthy) {
+      console.warn("⚠️ 景點推薦 Agent 健康檢查失敗，跳過");
+      agentResults.attractions = { success: false, error: "景點推薦服務健康檢查失敗", skipped: true };
     } else {
-      console.warn("⚠️ 景點推薦 Agent 健康檢查失敗，跳過呼叫");
-    }
+      await this.publishProgress(taskId, contextId, "正在諮詢景點推薦專家（透過 Tavily 搜尋真實資料）...", eventBus);
+      console.log("✅ 景點推薦 Agent 健康檢查通過，開始呼叫");
 
-    // 檢查住宿規劃 Agent
-    const accommodationHealthy = await this.agentRegistry.checkAgentHealth(
-      "accommodation"
-    );
-    if (accommodationHealthy) {
-      agentsToCall.push({
-        id: "accommodation",
-        name: "住宿規劃",
-        promise: this.callSingleAgent(
-          "accommodation",
-          "住宿規劃",
-          userText,
-          travelInfo,
-          AGENT_TIMEOUT,
-          promptOverrides?.accommodation,
-          provider
-        ),
-      });
-      console.log("✅ 住宿規劃 Agent 健康檢查通過");
-    } else {
-      console.warn("⚠️ 住宿規劃 Agent 健康檢查失敗，跳過呼叫");
-    }
-
-    // 如果沒有健康的 Agent，直接返回
-    if (agentsToCall.length === 0) {
-      console.warn("⚠️ 所有 Agent 都不健康，將使用備用方案");
-      return {};
-    }
-
-    // 並行呼叫健康的 Agents
-    const agentPromises = agentsToCall.map((agent) => agent.promise);
-
-    // 發布進度更新
-    await this.publishProgress(
-      taskId,
-      contextId,
-      "正在同時諮詢景點推薦和住宿規劃專家...",
-      eventBus
-    );
-
-    // 等待結果或超時
-    const results = await Promise.allSettled(agentPromises);
-
-    // 處理 Agent 結果（動態匹配）
-    results.forEach((result, index) => {
-      const agent = agentsToCall[index];
-
-      if (result.status === "fulfilled") {
-        agentResults[agent.id] = result.value;
-        console.log(`✅ ${agent.name}專家回應完成`);
-      } else {
-        console.error(`❌ ${agent.name}專家失敗:`, result.reason);
-        agentResults[agent.id] = {
-          success: false,
-          error: `${agent.name}服務暫時無法使用`,
-          fallback: true,
-        };
+      try {
+        agentResults.attractions = await this.callSingleAgent(
+          "attractions", "景點推薦", userText, travelInfo, AGENT_TIMEOUT,
+          promptOverrides?.attractions, provider
+        );
+        console.log("✅ 景點推薦專家回應完成");
+      } catch (err) {
+        console.error("❌ 景點推薦專家失敗:", err);
+        agentResults.attractions = { success: false, error: "景點推薦服務暫時無法使用", fallback: true };
       }
-    });
-
-    // 為未呼叫的 Agents 添加失敗標記
-    if (!agentResults.attractions) {
-      agentResults.attractions = {
-        success: false,
-        error: "景點推薦服務健康檢查失敗",
-        skipped: true,
-      };
     }
 
-    if (!agentResults.accommodation) {
-      agentResults.accommodation = {
-        success: false,
-        error: "住宿規劃服務健康檢查失敗",
-        skipped: true,
-      };
+    // ── Step 2: Extract attraction area from result ───────────────────────────
+    const attractionArea = this.extractAttractionArea(agentResults.attractions);
+    if (attractionArea) {
+      console.log(`📍 景點集中區域：${attractionArea}（傳給住宿規劃 Agent）`);
+    }
+
+    // ── Step 3: Accommodation Agent (uses attraction area as input) ───────────
+    const accommodationHealthy = await this.agentRegistry.checkAgentHealth("accommodation");
+
+    if (!accommodationHealthy) {
+      console.warn("⚠️ 住宿規劃 Agent 健康檢查失敗，跳過");
+      agentResults.accommodation = { success: false, error: "住宿規劃服務健康檢查失敗", skipped: true };
+    } else {
+      await this.publishProgress(taskId, contextId, "正在諮詢住宿規劃專家（依據景點位置搜尋附近住宿）...", eventBus);
+      console.log("✅ 住宿規劃 Agent 健康檢查通過，開始呼叫");
+
+      try {
+        agentResults.accommodation = await this.callSingleAgent(
+          "accommodation", "住宿規劃", userText, travelInfo, AGENT_TIMEOUT,
+          promptOverrides?.accommodation, provider, attractionArea
+        );
+        console.log("✅ 住宿規劃專家回應完成");
+      } catch (err) {
+        console.error("❌ 住宿規劃專家失敗:", err);
+        agentResults.accommodation = { success: false, error: "住宿規劃服務暫時無法使用", fallback: true };
+      }
     }
 
     return agentResults;
@@ -716,14 +666,15 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     travelInfo: any,
     timeout: number,
     promptOverride?: any,
-    provider?: LLMProvider
+    provider?: LLMProvider,
+    attractionArea?: string
   ): Promise<any> {
     try {
       console.log(`🔗 呼叫 ${agentName}...`);
       return await this.agentRegistry.callAgentAPI(
         agentId,
         "process_request",
-        { request: userText, ...travelInfo, promptOverride, provider },
+        { request: userText, ...travelInfo, promptOverride, provider, attractionArea },
         timeout
       );
     } catch (error) {
@@ -765,6 +716,24 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     }
 
     return info;
+  }
+
+  /**
+   * 從景點推薦結果中提取景點集中區域（傳給住宿 Agent）
+   */
+  private extractAttractionArea(attractionsResult: any): string | undefined {
+    const text: string = attractionsResult?.data?.response || "";
+    if (!text) return undefined;
+
+    // Look for "景點地區摘要" section which the attractions prompt asks for
+    const summaryMatch = text.match(/景點地區摘要[：:]\s*([\s\S]{1,300})/);
+    if (summaryMatch) return summaryMatch[1].trim().slice(0, 200);
+
+    // Fallback: pick the first region-like phrase
+    const regionMatch = text.match(/(?:地區|區域|中城|市區|老城|新宿|澀谷|銀座)[：:\s]*([^\n]{5,50})/);
+    if (regionMatch) return regionMatch[1].trim();
+
+    return undefined;
   }
 
   /**

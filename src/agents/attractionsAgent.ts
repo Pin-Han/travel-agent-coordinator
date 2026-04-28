@@ -11,6 +11,7 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { createLLMClient, LLMProvider } from "../services/llmClient.js";
 import { getPrompts } from "../services/promptStore.js";
+import { TavilyMCPClient } from "../services/tavilyMCPClient.js";
 
 export class AttractionsAgentExecutor implements AgentExecutor {
   constructor() {
@@ -52,7 +53,7 @@ export class AttractionsAgentExecutor implements AgentExecutor {
           kind: "message",
           role: "agent",
           messageId: uuidv4(),
-          parts: [{ kind: "text", text: "正在搜尋景點推薦..." }],
+          parts: [{ kind: "text", text: TavilyMCPClient.isAvailable() ? "正在透過 Tavily 搜尋真實景點資料..." : "正在規劃景點推薦..." }],
           taskId,
           contextId,
         },
@@ -141,12 +142,35 @@ export class AttractionsAgentExecutor implements AgentExecutor {
   private async generateRecommendations(requestText: string, override?: any, provider?: LLMProvider): Promise<string> {
     const { attractions } = getPrompts();
     const merged = { ...attractions, ...override };
-    const prompt = merged.user.replace("{request}", requestText);
+
+    // Try to fetch real attraction data via Tavily MCP
+    const tavilyClient = TavilyMCPClient.getInstance();
+    const destination = this.extractDestination(requestText);
+    const searchData = await tavilyClient.search(
+      `${destination} top attractions must-see travel guide`,
+      8
+    );
+
+    // Inject real search results into the prompt when available
+    const enrichedRequest = searchData
+      ? `${requestText}\n\n---\n以下是透過 Tavily 搜尋到的真實資料，請參考這些資料進行規劃：\n${searchData}`
+      : requestText;
+
+    const prompt = merged.user.replace("{request}", enrichedRequest);
 
     const llmClient = createLLMClient(provider);
     return await llmClient.complete(prompt, {
       system: merged.system,
       maxTokens: 2000,
     });
+  }
+
+  private extractDestination(requestText: string): string {
+    // Extract destination from request for targeted search
+    const keywords = ["去", "到", "前往", "規劃", "旅遊", "旅行", "天"];
+    let dest = requestText.slice(0, 50); // fallback: first 50 chars
+    const match = requestText.match(/(?:去|到|前往)\s*([^\s,，。]+)/);
+    if (match) dest = match[1];
+    return dest;
   }
 }

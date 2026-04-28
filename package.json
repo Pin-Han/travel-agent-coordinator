@@ -33,11 +33,13 @@
     "@a2a-js/sdk": "^0.3.1",
     "@anthropic-ai/sdk": "^0.91.1",
     "@google/generative-ai": "^0.24.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "morgan": "^1.10.0",
+    "tavily-mcp": "^0.2.19",
     "uuid": "^11.0.3"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import { AgentRegistry, AgentAPIResponse } from "../types/index.js";
 import { createLLMClient, LLMClient, LLMProvider } from "./llmClient.js";
+import { TavilyMCPClient } from "./tavilyMCPClient.js";
 
 export class AgentRegistryService {
   private agents: Map<string, AgentRegistry> = new Map();
@@ -180,17 +181,28 @@ export class AgentRegistryService {
   private async callAttractionsLLM(data: any): Promise<AgentAPIResponse> {
     const travelInfo = this.extractTravelInfo(data.request || "");
 
+    // Try Tavily MCP for real attraction data
+    const tavilyClient = TavilyMCPClient.getInstance();
+    const searchData = await tavilyClient.search(
+      `${travelInfo.destination} top attractions must-see travel guide`,
+      8
+    );
+
+    const searchContext = searchData
+      ? `\n\n以下是透過 Tavily 搜尋到的真實資料，請參考：\n${searchData}`
+      : "";
+
     const prompt = `你是一位專業的旅遊景點顧問。請根據以下資訊推薦景點和美食：
 - 目的地：${travelInfo.destination}
 - 天數：${travelInfo.duration}天
 - 預算：${travelInfo.budget ? `${travelInfo.budget}元` : "不限"}
 - 偏好：${travelInfo.preferences.length > 0 ? travelInfo.preferences.join(", ") : "無特殊偏好"}
-- 人數：${travelInfo.travelers}人
+- 人數：${travelInfo.travelers}人${searchContext}
 
 請提供：
 1. 每天推薦的景點和美食（依天數規劃）
-2. 各景點的特色說明和建議停留時間
-3. 實用旅遊建議
+2. 各景點所在地區（結尾附「景點地區摘要」列出各天活動地區，供住宿規劃參考）
+3. 各景點費用估算
 
 請用繁體中文回答，格式清晰易讀。`;
 
@@ -214,18 +226,32 @@ export class AgentRegistryService {
    */
   private async callAccommodationLLM(data: any): Promise<AgentAPIResponse> {
     const travelInfo = this.extractTravelInfo(data.request || "");
-    const attractionList: string[] = data.attractionList || [];
+    const attractionArea: string = data.attractionArea || travelInfo.destination;
+
+    // Try Tavily MCP — search near the attraction area (dependency on Attractions Agent)
+    const tavilyClient = TavilyMCPClient.getInstance();
+    const searchData = await tavilyClient.search(
+      `hotels accommodation near ${attractionArea} ${travelInfo.destination} budget`,
+      6
+    );
+
+    const searchContext = searchData
+      ? `\n\n以下是透過 Tavily 搜尋到的真實住宿資料，請參考：\n${searchData}`
+      : "";
+
+    const areaContext = attractionArea !== travelInfo.destination
+      ? `\n- 景點集中區域（由景點推薦 Agent 提供）：${attractionArea}`
+      : "";
 
     const prompt = `你是一位專業的住宿和交通規劃顧問。請根據以下資訊推薦住宿和交通方案：
 - 目的地：${travelInfo.destination}
 - 天數：${travelInfo.duration}天
 - 預算：${travelInfo.budget ? `${travelInfo.budget}元` : "不限"}
-- 人數：${travelInfo.travelers}人
-- 已規劃景點：${attractionList.length > 0 ? attractionList.join(", ") : "待確認"}
+- 人數：${travelInfo.travelers}人${areaContext}${searchContext}
 
 請提供：
-1. 推薦住宿選項（含價格區間、位置優勢）
-2. 各天的交通建議（大眾運輸 / 租車 / 計程車）
+1. 推薦住宿選項（2-3 間，含價格區間、位置優勢，說明為何靠近主要景點）
+2. 各天的交通建議（大眾運輸 / 步行距離）
 3. 住宿訂房注意事項
 
 請用繁體中文回答，格式清晰易讀。`;
@@ -330,11 +356,12 @@ export class AgentRegistryService {
               text: data.request || JSON.stringify(data),
             },
           ],
-          // prompt override 和 provider 透過 metadata 傳遞給 sub-agent
-          ...((data.promptOverride || data.provider) && {
+          // prompt override, provider, attractionArea 透過 metadata 傳遞給 sub-agent
+          ...((data.promptOverride || data.provider || data.attractionArea) && {
             metadata: {
               ...(data.promptOverride && { promptOverride: data.promptOverride }),
               ...(data.provider && { provider: data.provider }),
+              ...(data.attractionArea && { attractionArea: data.attractionArea }),
             },
           }),
           kind: "message",
