@@ -15,6 +15,7 @@ graph TD
     Eval["⚖️ Evaluator\n(independent LLM call)"]
     MemExt["📝 Memory Extractor\n(independent LLM call)"]
     Schema["✅ Schema Validator"]
+    Budget["💰 Budget Calculator\n(structured cost breakdown)"]
     Tavily["🔍 Tavily Search (MCP)"]
 
     User -->|"A2A JSON-RPC 2.0\n(SSE streaming)"| Coord
@@ -30,6 +31,8 @@ graph TD
     Trans --> Tavily
     Coord --> Eval
     Eval -->|"score < 7 → revise"| Coord
+    Schema -->|"structuredData"| Budget
+    Budget -->|"cost breakdown"| Coord
     Coord --> MemExt
     MemExt --> Mem
 ```
@@ -37,14 +40,15 @@ graph TD
 ### How a request flows
 
 ```
-1. read_memory()          — load stored user preferences
-2. ask_user() (if needed) — clarify destination or duration
+1. read_memory()            — load stored user preferences
+2. ask_user() (if needed)   — clarify destination or duration
 3. call_agent(attractions)  → JSON output → Schema Validator
 4. call_agent(accommodation)→ JSON output → Schema Validator
 5. call_agent(transportation)→JSON output → Schema Validator
 6. Write final plan (text)
 7. Evaluator scores plan (0–10). Score < 7 → revise (max 2 rounds)
-8. extractAndSaveMemory() — save new preferences for next session
+8. calculateBudget()        — itemised cost table appended to plan
+9. extractAndSaveMemory()   — save new preferences for next session
 ```
 
 ### Key components
@@ -55,6 +59,7 @@ graph TD
 | **Specialist Agents** | Attractions / Accommodation / Transportation — each outputs structured JSON |
 | **Schema Validator** | Hard-checks agent JSON output; retries once with feedback on failure |
 | **Evaluator** | Independent LLM scores the draft plan (0–10); injects feedback if score < 7 |
+| **Budget Calculator** | Computes itemised cost breakdown from structured agent outputs; flags overage |
 | **Memory Extractor** | Independent LLM extracts user preferences after each session |
 | **Tavily MCP** | Real-time web search for attractions, hotels, transit routes |
 
@@ -78,14 +83,16 @@ You'll see the Orchestrator's agentic loop in real time:
 2. Attractions specialist finds temple districts and food areas (returns structured JSON)
 3. Accommodation specialist finds hotels near attraction zones (returns structured JSON)
 4. Transportation specialist maps out transit options (returns structured JSON)
-5. Coordinator synthesises a complete itinerary
+5. Orchestrator synthesises a complete itinerary
 6. Evaluator scores the plan — if below 7/10, the plan is revised
-7. Preferences saved to memory for next session
+7. Budget Calculator appends an itemised cost table; flags if total exceeds $1000
+8. Preferences saved to memory for next session
 
 ## Features
 
 - **Agentic Orchestrator** — LLM-driven dispatch via tool use; agents called dynamically, not hardcoded
 - **Structured JSON output** — All specialist agents return typed JSON; Schema Validator enforces required fields with retry
+- **Budget Calculator** — Itemised cost breakdown (attractions, accommodation, meals, transit) computed from structured agent output; overage sensor flags plans that exceed the stated budget (warning ≤20%, error >20%)
 - **Evaluator Agent** — Independent LLM scores each draft plan (0–10); score < 7 triggers up to 2 revision rounds
 - **User Memory** — Preferences persist across sessions (`data/memory/default.json`); automatically applied to future plans
 - **Request Logs** — Every request logged to browser localStorage; view step-by-step timeline in the Logs page
@@ -94,7 +101,7 @@ You'll see the Orchestrator's agentic loop in real time:
 - **SSE streaming** — Real-time single-line progress display as each specialist is consulted
 - **Multi-provider LLM** — Switch between Anthropic (Claude) and Google (Gemini) from the UI; no server restart needed
 - **Configurable prompts** — Edit system prompts for each agent in the Settings page
-- **Graceful degradation** — Schema validation failure falls back to plain text; evaluator failure is treated as passed
+- **Graceful degradation** — Schema validation failure falls back to plain text; evaluator failure is treated as passed; budget calculation failure is silently skipped
 
 ## Getting Started
 
@@ -164,6 +171,7 @@ src/
 │   ├── agentRegistry.ts         # Agent calls, schema validation, Tavily enrichment
 │   ├── promptStore.ts           # docs/prompts/*.md hot-reload
 │   ├── schemaValidator.ts       # JSON schema validation for agent outputs
+│   ├── budgetCalculator.ts      # Cost breakdown + budget compliance sensor
 │   ├── memoryService.ts         # User preference persistence (data/memory/)
 │   ├── tavilyMCPClient.ts       # Tavily Search MCP client (singleton)
 │   └── taskStore.ts             # In-memory task state
@@ -255,9 +263,9 @@ Make sure you ran `npm install` inside the `web/` directory, and that the orches
 - [x] Phase 8 — User Memory: cross-session preference persistence
 - [x] Phase 9 — UX polish: single-line progress, response timing, request logs, improved memory extraction
 - [x] Phase 10 — Structured output: agents return typed JSON; Schema Validator with retry
-- [ ] Phase 11 — Map visualisation + itinerary export (.ics, PDF)
-- [ ] Phase 12 — Multi-round refinement: partial updates without full regeneration
-- [ ] Phase 13 — Budget calculation: itemised cost breakdown with overage alerts
+- [x] Phase 11 — Budget calculation: itemised cost breakdown with overage alerts
+- [ ] Phase 12 — Map visualisation + itinerary export (.ics, PDF)
+- [ ] Phase 13 — Multi-round refinement: partial updates without full regeneration
 - [ ] Phase 14 — Context awareness: weather, holidays, visa requirements
 
 ## License
