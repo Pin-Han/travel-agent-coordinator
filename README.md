@@ -268,9 +268,13 @@ Make sure you ran `npm install` inside the `web/` directory, and that the orches
 - [x] Phase 9 — UX polish: single-line progress, response timing, request logs, improved memory extraction
 - [x] Phase 10 — Structured output: agents return typed JSON; Schema Validator with retry
 - [x] Phase 11 — Budget calculation: itemised cost breakdown with overage alerts
+- [x] Phase 15 — 3-turn confirmation flow: itinerary → accommodation → transport (prompt-only)
 - [ ] Phase 12 — Map visualisation + itinerary export (.ics, PDF)
 - [ ] Phase 13 — Multi-round refinement: partial updates without full regeneration
 - [ ] Phase 14 — Context awareness: weather, holidays, visa requirements
+- [ ] Phase 16 — PDF export: one-click download of the complete plan
+- [ ] Phase 17 — Multi-city itineraries: 2–4 cities with inter-city transport
+- [ ] Phase 18 — Real-time travel assistant: nearby attractions, navigation, weather on the go
 
 ## License
 
