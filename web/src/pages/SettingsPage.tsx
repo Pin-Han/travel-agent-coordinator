@@ -5,7 +5,7 @@ interface AgentPrompt {
   user: string;
 }
 
-interface CoordinatorPrompt {
+interface OrchestratorPrompt {
   system: string;
   integration?: string;
   fallback?: string;
@@ -20,7 +20,7 @@ interface Prompts {
   attractions: AgentPrompt;
   accommodation: AgentPrompt;
   transportation: TransportationPrompt;
-  coordinator: CoordinatorPrompt;
+  orchestrator: OrchestratorPrompt;
 }
 
 interface LLMConfig {
@@ -43,7 +43,7 @@ const AGENT_NAMES: Record<string, string> = {
   attractions: "🗺️ Attractions Agent",
   accommodation: "🏨 Accommodation Agent",
   transportation: "🚇 Transportation Agent",
-  coordinator: "🎯 Coordinator (synthesis layer)",
+  orchestrator: "🎯 Orchestrator (synthesis layer)",
 };
 
 // Fields managed by the system or deprecated — hidden from the UI editor
@@ -86,7 +86,7 @@ export default function SettingsPage() {
         setPrompts(data);
         localStorage.setItem("agent-prompts", JSON.stringify(data));
       })
-      .catch(() => setError("Failed to load default settings. Make sure the Coordinator server is running."));
+      .catch(() => setError("Failed to load default settings. Make sure the Orchestrator server is running."));
   }, []);
 
   function handleChange(agent: keyof Prompts, field: string, value: string) {
@@ -101,7 +101,7 @@ export default function SettingsPage() {
       setMemoryCleared(true);
       setTimeout(() => setMemoryCleared(false), 3000);
     } catch {
-      setError("Failed to clear memory. Make sure the Coordinator server is running.");
+      setError("Failed to clear memory. Make sure the Orchestrator server is running.");
     } finally {
       setMemoryClearing(false);
     }

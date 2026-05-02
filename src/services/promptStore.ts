@@ -10,7 +10,7 @@ export interface AgentPrompt {
   user: string;
 }
 
-export interface CoordinatorPrompt {
+export interface OrchestratorPrompt {
   system: string;
   integration?: string; // deprecated — kept for backward compat; not used by agentic loop
   fallback?: string;    // deprecated
@@ -21,7 +21,7 @@ export interface Prompts {
   attractions: AgentPrompt;
   accommodation: AgentPrompt;
   transportation: AgentPrompt;
-  coordinator: CoordinatorPrompt;
+  orchestrator: OrchestratorPrompt;
 }
 
 // ── Markdown parser ───────────────────────────────────────────────────────────
@@ -53,10 +53,10 @@ function readAgentPrompt(agentName: string): AgentPrompt {
   };
 }
 
-function readCoordinatorPrompt(): CoordinatorPrompt {
-  const filePath = join(PROMPTS_DIR, "coordinator.md");
+function readOrchestratorPrompt(): OrchestratorPrompt {
+  const filePath = join(PROMPTS_DIR, "orchestrator.md");
   if (!existsSync(filePath)) {
-    console.warn(`[PromptStore] coordinator.md not found — using empty prompt`);
+    console.warn(`[PromptStore] orchestrator.md not found — using empty prompt`);
     return { system: "", integration: "", fallback: "", clarify: "" };
   }
   const sections = parseMdSections(readFileSync(filePath, "utf-8"));
@@ -91,7 +91,7 @@ export function getPrompts(): Prompts {
     attractions:    readAgentPrompt("attractions"),
     accommodation:  readAgentPrompt("accommodation"),
     transportation: readAgentPrompt("transportation"),
-    coordinator:    readCoordinatorPrompt(),
+    orchestrator:   readOrchestratorPrompt(),
   };
 }
 
@@ -101,21 +101,21 @@ function writeAgentMd(agentName: string, prompt: AgentPrompt): void {
   writeFileSync(join(PROMPTS_DIR, `${agentName}.md`), content, "utf-8");
 }
 
-function writeCoordinatorMd(prompt: CoordinatorPrompt): void {
-  const existing = existsSync(join(PROMPTS_DIR, "coordinator.md"))
-    ? readFileSync(join(PROMPTS_DIR, "coordinator.md"), "utf-8")
+function writeOrchestratorMd(prompt: OrchestratorPrompt): void {
+  const existing = existsSync(join(PROMPTS_DIR, "orchestrator.md"))
+    ? readFileSync(join(PROMPTS_DIR, "orchestrator.md"), "utf-8")
     : "";
   // Preserve the `clarify` section — it's managed by the system, not the UI
   const existingSections = parseMdSections(existing);
   const clarifySectionText = prompt.clarify || existingSections["clarify"] || "";
 
   const content =
-    `# Coordinator\n\n` +
+    `# Orchestrator\n\n` +
     `## system\n\n${prompt.system}\n\n` +
     `## integration\n\n${prompt.integration}\n\n` +
     `## fallback\n\n${prompt.fallback}\n` +
     (clarifySectionText ? `\n## clarify\n\n${clarifySectionText}\n` : "");
-  writeFileSync(join(PROMPTS_DIR, "coordinator.md"), content, "utf-8");
+  writeFileSync(join(PROMPTS_DIR, "orchestrator.md"), content, "utf-8");
 }
 
 export function savePrompts(prompts: Prompts): void {
@@ -123,6 +123,6 @@ export function savePrompts(prompts: Prompts): void {
   writeAgentMd("attractions",    prompts.attractions);
   writeAgentMd("accommodation",  prompts.accommodation);
   writeAgentMd("transportation", prompts.transportation);
-  writeCoordinatorMd(prompts.coordinator);
+  writeOrchestratorMd(prompts.orchestrator);
   console.log("[PromptStore] docs/prompts/*.md updated");
 }

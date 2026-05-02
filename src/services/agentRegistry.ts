@@ -436,7 +436,7 @@ export class AgentRegistryService {
     const jsonRpcRequest = {
       jsonrpc: "2.0",
       method: "message/send",
-      id: `coordinator-${Date.now()}`,
+      id: `orchestrator-${Date.now()}`,
       params: {
         message: {
           messageId: `msg-${Date.now()}`,
@@ -463,7 +463,7 @@ export class AgentRegistryService {
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "User-Agent": "A2A-Travel-Coordinator/1.0",
+      "User-Agent": "A2A-Travel-Orchestrator/1.0",
     };
 
     if (agent.apiKey) {

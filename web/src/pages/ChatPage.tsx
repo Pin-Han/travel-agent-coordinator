@@ -22,7 +22,7 @@ export interface LogEntry {
 const WELCOME: Message = {
   id: "welcome",
   role: "agent",
-  text: "Hi! I'm your AI travel planning coordinator. Where would you like to go?\n\n**Try:** *Plan me a 4-day Tokyo trip, budget $1000, interested in temples and food, 2 people*",
+  text: "Hi! I'm your AI travel planning orchestrator. Where would you like to go?\n\n**Try:** *Plan me a 4-day Tokyo trip, budget $1000, interested in temples and food, 2 people*",
   timestamp: new Date().toISOString(),
 };
 
@@ -317,7 +317,7 @@ export default function ChatPage() {
       <div className="px-4 sm:px-6 py-3 border-b bg-white flex items-center justify-between">
         <div>
           <h2 className="font-semibold text-gray-700">Travel Planner</h2>
-          <p className="text-xs text-gray-400 hidden sm:block">Agentic Coordinator · Attractions + Accommodation + Transportation</p>
+          <p className="text-xs text-gray-400 hidden sm:block">Agentic Orchestrator · Attractions + Accommodation + Transportation</p>
         </div>
         <div className="flex items-center gap-3">
           {sessionTokens > 0 && (

@@ -64,7 +64,7 @@ async function main() {
 
   app.use(cors());
 
-  // Health endpoint（供 Coordinator 健康檢查）
+  // Health endpoint（供 Orchestrator 健康檢查）
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", agent: "attractions", port: PORT });
   });

@@ -61,7 +61,7 @@
 
 **呼叫端調整**：
 - `src/services/agentRegistry.ts`：`AgentAPIResponse.data` 加 `tokenUsage?: { inputTokens: number; outputTokens: number }`
-- `src/agents/coordinatorExecutor.ts`：彙整三個 LLM call（attractions/accommodation/synthesis）的 token 數，累加後放入 artifact event metadata
+- `src/agents/orchestratorExecutor.ts`：彙整三個 LLM call（attractions/accommodation/synthesis）的 token 數，累加後放入 artifact event metadata
 
 **前端顯示**：
 - SSE `artifact-update` event 的 metadata 加入 token 數
@@ -72,7 +72,7 @@
 **受影響檔案**：
 - `src/services/llmClient.ts`（介面 + 實作）
 - `src/services/agentRegistry.ts`（response 型別）
-- `src/agents/coordinatorExecutor.ts`（彙整 + 傳遞）
+- `src/agents/orchestratorExecutor.ts`（彙整 + 傳遞）
 - `web/src/pages/ChatPage.tsx`（顯示）
 
 ---
@@ -135,7 +135,7 @@ After:  You are a professional travel planner specializing in attractions and di
 | 2 | `web/src/pages/ChatPage.tsx` + `SettingsPage.tsx`：英文化 | Low |
 | 3 | `ChatPage.tsx`：localStorage 對話持久化 | Low-Medium |
 | 4 | `llmClient.ts`：回傳 `LLMResponse`（breaking change） | Medium |
-| 5 | `agentRegistry.ts` + `coordinatorExecutor.ts`：傳遞 token 數 | Medium |
+| 5 | `agentRegistry.ts` + `orchestratorExecutor.ts`：傳遞 token 數 | Medium |
 | 6 | `ChatPage.tsx`：顯示 token 數 | Low |
 | 7 | `ChatPage.tsx`：Markdown 樣式調整（視效果而定） | Low |
 

@@ -66,7 +66,7 @@ async function main() {
 
   app.use(cors());
 
-  // Health endpoint (used by Coordinator health checks)
+  // Health endpoint (used by Orchestrator health checks)
   app.get("/health", (_req, res) => {
     const provider = process.env.LLM_PROVIDER || "anthropic";
     const hasKey =

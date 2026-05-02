@@ -1,4 +1,4 @@
-# Travel Agent Coordinator
+# Travel Agent Orchestrator
 
 A multi-agent travel planning system built on [Google's A2A Protocol](https://google.github.io/A2A/) — demonstrating how independent AI agents discover, communicate, and collaborate via JSON-RPC 2.0.
 
@@ -7,7 +7,7 @@ A multi-agent travel planning system built on [Google's A2A Protocol](https://go
 ```mermaid
 graph TD
     User["🧑 User\n(React Web UI :5173)"]
-    Coord["🤖 Coordinator Agent (:3000)\nAgentic Loop — LLM tool use"]
+    Coord["🤖 Orchestrator Agent (:3000)\nAgentic Loop — LLM tool use"]
     Mem["🧠 Memory\n(data/memory/default.json)"]
     Attr["🗺️ Attractions Agent (:3001)"]
     Accom["🏨 Accommodation Agent (:3002)"]
@@ -51,7 +51,7 @@ graph TD
 
 | Component | Role |
 |-----------|------|
-| **Coordinator** | Agentic loop — LLM decides what to call and when |
+| **Orchestrator** | Agentic loop — LLM decides what to call and when |
 | **Specialist Agents** | Attractions / Accommodation / Transportation — each outputs structured JSON |
 | **Schema Validator** | Hard-checks agent JSON output; retries once with feedback on failure |
 | **Evaluator** | Independent LLM scores the draft plan (0–10); injects feedback if score < 7 |
@@ -64,8 +64,8 @@ Each sub-agent supports two modes, switchable via environment variable:
 
 | Mode | How it works | When to use |
 |------|-------------|-------------|
-| `api` (default) | Coordinator calls LLM directly — no separate process needed | Local dev, quick testing |
-| `a2a` | Each agent runs as an independent process; Coordinator sends real A2A JSON-RPC 2.0 requests | Demo, showcasing the full protocol |
+| `api` (default) | Orchestrator calls LLM directly — no separate process needed | Local dev, quick testing |
+| `a2a` | Each agent runs as an independent process; Orchestrator sends real A2A JSON-RPC 2.0 requests | Demo, showcasing the full protocol |
 
 ## Quick Demo
 
@@ -73,7 +73,7 @@ Start the system and try this prompt:
 
 > **"Plan me a 4-day Tokyo trip, budget $1000, 2 people, interested in temples and local food"**
 
-You'll see the Coordinator's agentic loop in real time:
+You'll see the Orchestrator's agentic loop in real time:
 1. User preferences loaded from memory
 2. Attractions specialist finds temple districts and food areas (returns structured JSON)
 3. Accommodation specialist finds hotels near attraction zones (returns structured JSON)
@@ -134,7 +134,7 @@ TAVILY_API_KEY=tvly-...
 ### 3. Start
 
 ```bash
-# Start everything: coordinator + all sub-agents + web UI
+# Start everything: orchestrator + all sub-agents + web UI
 npm run dev:all
 
 # Backend only (no web UI)
@@ -151,7 +151,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ```
 src/
 ├── agents/
-│   ├── coordinatorExecutor.ts   # Agentic loop, evaluator, memory extraction
+│   ├── orchestratorExecutor.ts   # Agentic loop, evaluator, memory extraction
 │   ├── attractionsAgent.ts      # Attractions AgentExecutor
 │   ├── accommodationAgent.ts    # Accommodation AgentExecutor
 │   └── transportationAgent.ts   # Transportation AgentExecutor
@@ -167,7 +167,7 @@ src/
 │   ├── memoryService.ts         # User preference persistence (data/memory/)
 │   ├── tavilyMCPClient.ts       # Tavily Search MCP client (singleton)
 │   └── taskStore.ts             # In-memory task state
-└── index.ts                     # Coordinator entry point + API endpoints
+└── index.ts                     # Orchestrator entry point + API endpoints
 
 web/
 ├── src/
@@ -180,7 +180,7 @@ web/
 
 docs/
 ├── prompts/                     # System prompts for all agents (.md, hot-reloaded)
-│   ├── coordinator.md
+│   ├── orchestrator.md
 │   ├── attractions.md
 │   ├── accommodation.md
 │   ├── transportation.md
@@ -205,9 +205,9 @@ docs/
 | `ATTRACTIONS_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3001` |
 | `ACCOMMODATION_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3002` |
 | `TRANSPORTATION_AGENT_URL` | Sub-agent URL (a2a mode) | `http://localhost:3003` |
-| `PORT` | Coordinator port | `3000` |
+| `PORT` | Orchestrator port | `3000` |
 
-## API Endpoints (Coordinator)
+## API Endpoints (Orchestrator)
 
 | Endpoint | Description |
 |----------|-------------|
@@ -237,7 +237,7 @@ Make sure you've set `ATTRACTIONS_MODE=a2a` etc. and that `npm run dev:all` star
 Tavily is optional. Without `TAVILY_API_KEY`, agents fall back to LLM knowledge. Add the key to `.env` and restart.
 
 **Web UI shows blank page**
-Make sure you ran `npm install` inside the `web/` directory, and that the coordinator is running on `:3000`.
+Make sure you ran `npm install` inside the `web/` directory, and that the orchestrator is running on `:3000`.
 
 ## Roadmap
 

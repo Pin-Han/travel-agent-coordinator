@@ -92,14 +92,14 @@ Evaluator 的 system prompt，包含：
 - 評分維度詳細說明
 - 輸出 JSON 格式要求
 
-### 2. `src/agents/coordinatorExecutor.ts`
+### 2. `src/agents/orchestratorExecutor.ts`
 
 新增：
 - `EvaluationResult` interface
 - `evaluatePlan(draftText, userRequest, provider)` — 呼叫 LLM 打分，回傳 `EvaluationResult`
 - `runAgenticLoop()` 修改：產出 `type: "final"` 後，先過 evaluator；若失敗，將 feedback 附加到 messages 並繼續（`evaluationRound` 計數器控制最多 2 輪）
 
-### 3. `docs/prompts/coordinator.md`
+### 3. `docs/prompts/orchestrator.md`
 
 不需改動（序列執行的工作流程描述維持不變）。
 
@@ -126,8 +126,8 @@ accumulator.breakdown.push({ step: "evaluator", input: ..., output: ... });
 | 步驟 | 內容 |
 |------|------|
 | 1 | `docs/prompts/evaluator.md` — 撰寫評分 prompt（含角色強化指令） |
-| 2 | `coordinatorExecutor.ts` — 新增 `EvaluationResult` interface 和 `evaluatePlan()` |
-| 3 | `coordinatorExecutor.ts` — 修改 `runAgenticLoop()` 加入 evaluator 流程 |
+| 2 | `orchestratorExecutor.ts` — 新增 `EvaluationResult` interface 和 `evaluatePlan()` |
+| 3 | `orchestratorExecutor.ts` — 修改 `runAgenticLoop()` 加入 evaluator 流程 |
 | 4 | 端到端測試（見下） |
 
 ---

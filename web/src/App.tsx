@@ -11,10 +11,10 @@ export default function App() {
         <aside className="w-14 sm:w-48 shrink-0 bg-gray-900 text-white flex flex-col">
           <div className="p-3 sm:p-4 border-b border-gray-700">
             <h1 className="font-bold text-sm leading-tight hidden sm:block">
-              Travel Agent<br />Coordinator
+              Travel Agent<br />Orchestrator
             </h1>
             {/* Mobile: show icon only */}
-            <span className="text-lg sm:hidden" title="Travel Agent Coordinator">✈️</span>
+            <span className="text-lg sm:hidden" title="Travel Agent Orchestrator">✈️</span>
             <p className="text-xs text-gray-400 mt-1 hidden sm:block">A2A Protocol</p>
           </div>
           <nav className="flex-1 p-2 sm:p-3 space-y-1">

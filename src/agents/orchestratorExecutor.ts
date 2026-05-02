@@ -25,7 +25,15 @@ import { getPrompts, getEvaluatorSystemPrompt, getMemoryExtractorSystemPrompt } 
 import { AgentRegistryService } from "../services/agentRegistry.js";
 import { TaskStoreService } from "../services/taskStore.js";
 import { MemoryService, MemoryInsights } from "../services/memoryService.js";
-import { CoordinatorConfig } from "../types/index.js";
+import { OrchestratorConfig } from "../types/index.js";
+import {
+  extractTripDetails,
+  inferMealPreference,
+  calculateBudgetBreakdown,
+  checkBudgetCompliance,
+  formatBudgetMarkdown,
+} from "../services/budgetCalculator.js";
+import type { AttractionsOutput, AccommodationOutput, TransportationOutput } from "../services/schemaValidator.js";
 
 // Per-context A2A conversation history
 const contexts: Map<string, Message[]> = new Map();
@@ -47,17 +55,17 @@ interface TokenAccumulator {
   breakdown: Array<{ step: string; input: number; output: number }>;
 }
 
-export class TravelCoordinatorExecutor implements AgentExecutor {
+export class TravelOrchestratorExecutor implements AgentExecutor {
   private agentRegistry: AgentRegistryService;
   private taskStore: TaskStoreService;
   private memoryService: MemoryService;
   private cancelledTasks: Set<string> = new Set();
 
-  constructor(_config: CoordinatorConfig) {
+  constructor(_config: OrchestratorConfig) {
     this.agentRegistry = new AgentRegistryService();
     this.taskStore = new TaskStoreService();
     this.memoryService = new MemoryService();
-    console.log("🚀 Travel Coordinator Executor 初始化完成");
+    console.log("🚀 Travel Orchestrator Executor 初始化完成");
   }
 
   async cancelTask(taskId: string, _eventBus: ExecutionEventBus): Promise<void> {
@@ -71,7 +79,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     const taskId = requestContext.taskId;
     const contextId = requestContext.contextId;
 
-    console.log(`[Coordinator] Processing message ${userMessage.messageId} for task ${taskId} (context: ${contextId})`);
+    console.log(`[Orchestrator] Processing message ${userMessage.messageId} for task ${taskId} (context: ${contextId})`);
 
     // Publish initial Task if new
     if (!requestContext.task) {
@@ -144,7 +152,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     try {
       await this.processCoordination(taskId, contextId, eventBus, history, promptOverrides, provider);
     } catch (error: any) {
-      console.error(`[Coordinator] Error in task ${taskId}:`, error);
+      console.error(`[Orchestrator] Error in task ${taskId}:`, error);
       eventBus.publish({
         kind: "status-update",
         taskId,
@@ -186,7 +194,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     await this.publishProgress(taskId, contextId, "Planning your trip...", eventBus);
 
     const tools = this.buildToolDefinitions();
-    const systemPrompt = promptOverrides?.coordinator?.system ?? this.buildSystemPrompt();
+    const systemPrompt = promptOverrides?.orchestrator?.system ?? this.buildSystemPrompt();
     const llmMessages = this.buildLLMMessages(history);
 
     // Build full user request context for the evaluator (all user turns joined)
@@ -209,8 +217,11 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     // Extract and save memory (independent LLM call, non-blocking on failure)
     await this.extractAndSaveMemory(loopResult.text, history, provider);
 
+    // Append budget breakdown (Phase 11) — non-blocking on failure
+    const finalText = this.calculateAndAppendBudget(loopResult.text, loopResult.structuredResults, userRequest);
+
     // Final plan — publish artifact
-    await this.publishFinalPlan(taskId, contextId, loopResult.text, loopResult.tokenUsage, history, eventBus);
+    await this.publishFinalPlan(taskId, contextId, finalText, loopResult.tokenUsage, history, eventBus);
   }
 
   // ─── Agentic loop ─────────────────────────────────────────────────────────────
@@ -229,6 +240,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     type: "final" | "ask_user";
     text: string;
     tokenUsage: TokenAccumulator;
+    structuredResults: Map<string, any>;
   }> {
     const llmClient = createLLMClient(provider);
     if (!llmClient.completeWithTools) {
@@ -237,13 +249,14 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
 
     const messages: LLMMessage[] = [...initialMessages];
     const accumulator: TokenAccumulator = { inputTokens: 0, outputTokens: 0, breakdown: [] };
+    const structuredResults = new Map<string, any>();
     let evalRound = 0;
     let agentsCalled = 0; // only evaluate after at least one call_agent has run
 
     for (let turn = 1; turn <= MAX_LOOP_TURNS; turn++) {
       if (this.cancelledTasks.has(taskId)) break;
 
-      console.log(`[Coordinator] Loop turn ${turn}/${MAX_LOOP_TURNS}`);
+      console.log(`[Orchestrator] Loop turn ${turn}/${MAX_LOOP_TURNS}`);
 
       const response = await llmClient.completeWithTools(messages, tools, {
         system: systemPrompt,
@@ -254,7 +267,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
       if (response.usage) {
         accumulator.inputTokens  += response.usage.inputTokens;
         accumulator.outputTokens += response.usage.outputTokens;
-        accumulator.breakdown.push({ step: `Coordinator (turn ${turn})`, input: response.usage.inputTokens, output: response.usage.outputTokens });
+        accumulator.breakdown.push({ step: `Orchestrator (turn ${turn})`, input: response.usage.inputTokens, output: response.usage.outputTokens });
       }
 
       // Add assistant turn to conversation
@@ -270,7 +283,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
         // Only evaluate plans that were built with agent calls.
         // If no agent was called yet, this is a clarifying question or interim response — return directly.
         if (agentsCalled === 0) {
-          return { type: "final", text: finalText, tokenUsage: accumulator };
+          return { type: "final", text: finalText, tokenUsage: accumulator, structuredResults };
         }
 
         await this.publishProgress(taskId, contextId, "Reviewing plan quality...", eventBus);
@@ -278,7 +291,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
         console.log(`[Evaluator] Score: ${evalResult.score}/10, passed: ${evalResult.passed} (round ${evalRound + 1}/${MAX_EVAL_ROUNDS})`);
 
         if (evalResult.passed || evalRound >= MAX_EVAL_ROUNDS) {
-          return { type: "final", text: finalText, tokenUsage: accumulator };
+          return { type: "final", text: finalText, tokenUsage: accumulator, structuredResults };
         }
 
         // Failed — inject feedback as an internal review, not as user criticism
@@ -307,7 +320,7 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
       for (const toolCall of toolCalls) {
         if (toolCall.name === "ask_user") {
           const question: string = (toolCall.input as any).question ?? "Could you provide more details?";
-          return { type: "ask_user", text: question, tokenUsage: accumulator };
+          return { type: "ask_user", text: question, tokenUsage: accumulator, structuredResults };
         }
 
         if (toolCall.name === "read_memory") {
@@ -349,6 +362,11 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
             accumulator.breakdown.push({ step: `${agent_id} specialist`, input: tu.inputTokens ?? 0, output: tu.outputTokens ?? 0 });
           }
 
+          // Capture structured data for budget calculation (Phase 11)
+          if (agentResult.success && agentResult.data?.structuredData) {
+            structuredResults.set(agent_id, agentResult.data.structuredData);
+          }
+
           const resultText = agentResult.success
             ? (agentResult.data?.response ?? "Agent responded with no content.")
             : `The ${agent_id} specialist is temporarily unavailable. Please continue planning based on available information.`;
@@ -367,11 +385,12 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     }
 
     // Max turns reached — return whatever we have
-    console.warn(`[Coordinator] Agentic loop reached ${MAX_LOOP_TURNS}-turn limit`);
+    console.warn(`[Orchestrator] Agentic loop reached ${MAX_LOOP_TURNS}-turn limit`);
     return {
       type: "final",
       text: "I've gathered enough information to create your travel plan. Here's what I have so far — feel free to ask for more details on any section.",
       tokenUsage: accumulator,
+      structuredResults,
     };
   }
 
@@ -474,6 +493,57 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
     }
   }
 
+  // ─── Budget calculation ────────────────────────────────────────────────────────
+
+  /**
+   * Appends a cost breakdown table to the final plan text.
+   * Reads structured agent results collected during the agentic loop.
+   * Returns the original text unchanged if structured data is unavailable or calculation fails.
+   */
+  private calculateAndAppendBudget(
+    finalText: string,
+    structuredResults: Map<string, any>,
+    userRequest: string
+  ): string {
+    try {
+      const attractionsData = structuredResults.get("attractions") as AttractionsOutput | undefined;
+      const accommodationData = structuredResults.get("accommodation") as AccommodationOutput | undefined;
+      const transportationData = structuredResults.get("transportation") as TransportationOutput | undefined;
+
+      // Need at least attractions + accommodation to produce a meaningful estimate
+      if (!attractionsData || !accommodationData) {
+        console.log("[Budget] Skipping — structured data missing for attractions or accommodation");
+        return finalText;
+      }
+
+      const { duration_days, travelers, budget_usd } = extractTripDetails(userRequest);
+
+      // Infer meal preference from stored memory
+      const memory = this.memoryService.readMemory("default");
+      const meal_preference = inferMealPreference(memory.preferences.travelStyle);
+
+      const breakdown = calculateBudgetBreakdown({
+        destination: "",
+        duration_days,
+        travelers,
+        budget_usd,
+        attractions: attractionsData.attractions ?? [],
+        accommodation: accommodationData.recommendations ?? [],
+        transportation: transportationData ?? { primary_transit: "", key_routes: [] },
+        meal_preference,
+      });
+
+      const compliance = checkBudgetCompliance(breakdown, budget_usd);
+      const budgetMd = formatBudgetMarkdown(breakdown, compliance, travelers, budget_usd);
+
+      console.log(`[Budget] Appended breakdown — total $${breakdown.total.min}–$${breakdown.total.max}, compliance: ${compliance.severity}`);
+      return finalText + budgetMd;
+    } catch (err) {
+      console.warn("[Budget] calculateAndAppendBudget failed — returning plan without budget section:", err);
+      return finalText;
+    }
+  }
+
   // ─── Tool definitions ─────────────────────────────────────────────────────────
 
   private buildToolDefinitions(): ToolDefinition[] {
@@ -532,12 +602,12 @@ export class TravelCoordinatorExecutor implements AgentExecutor {
   }
 
   private buildSystemPrompt(): string {
-    const { coordinator } = getPrompts();
+    const { orchestrator } = getPrompts();
     const agents = this.agentRegistry.getAllAgents();
     const agentDescriptions = agents
       .map((a) => `[${a.id}]\nDescription: ${a.description}\nCapabilities: ${a.capabilities.join(", ")}`)
       .join("\n\n");
-    return `${coordinator.system}\n\nAvailable specialist agents:\n${agentDescriptions}`;
+    return `${orchestrator.system}\n\nAvailable specialist agents:\n${agentDescriptions}`;
   }
 
   /**

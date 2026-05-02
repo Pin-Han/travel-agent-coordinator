@@ -46,7 +46,7 @@
 | 呼叫哪個 agent | TypeScript 寫死 | LLM 依情境決定 |
 | 呼叫順序 | 永遠 attractions → accommodation | LLM 視需要調整 |
 | 資訊不足 | 直接呼叫、結果品質差 | 先問使用者再呼叫 |
-| 新增 agent | 要改 coordinatorExecutor.ts | 只需加 tool definition |
+| 新增 agent | 要改 orchestratorExecutor.ts | 只需加 tool definition |
 | 能力上限 | 只能三步流程 | 可多輪、可重新查詢 |
 
 ---
@@ -125,7 +125,7 @@ Skills: ...
 Description: ...
 ```
 
-→ 新增 agent 時，只要在 `agentRegistry.ts` 增加一筆 card，orchestrator 就自動感知，**不需要改任何 coordinatorExecutor 邏輯**。
+→ 新增 agent 時，只要在 `agentRegistry.ts` 增加一筆 card，orchestrator 就自動感知，**不需要改任何 orchestratorExecutor 邏輯**。
 
 ---
 
@@ -154,7 +154,7 @@ Sub-agent LLM calls（api 模式，各 agent 自己呼叫 LLM）
 ### 實作方式
 
 ```typescript
-// coordinatorExecutor.ts
+// orchestratorExecutor.ts
 interface TokenAccumulator {
   inputTokens: number;
   outputTokens: number;
@@ -219,7 +219,7 @@ completeWithTools(
 - **Anthropic**：`client.messages.create({ tools, messages })` — 原生支援，回傳 `content` 陣列含 `tool_use` block
 - **Gemini**：`model.generateContent({ tools: [{ functionDeclarations }] })` — 原生支援
 
-### 2. `src/agents/coordinatorExecutor.ts` — 改為 Agentic Loop
+### 2. `src/agents/orchestratorExecutor.ts` — 改為 Agentic Loop
 
 **移除**：
 - `callTwoMainAgents()`
@@ -236,9 +236,9 @@ completeWithTools(
 ```
 Orchestrator 呼叫 ask_user("How many days?")
     ↓
-coordinatorExecutor 發布 status: "input-required", final: true
+orchestratorExecutor 發布 status: "input-required", final: true
     ↓ （使用者回覆，同一 contextId）
-coordinatorExecutor.execute() 再次被呼叫
+orchestratorExecutor.execute() 再次被呼叫
     ↓
 從 contexts Map 取出歷史 → 把整段對話傳給 LLM → Loop 繼續
 ```
@@ -302,7 +302,7 @@ Orchestrator 的 `system` prompt 要清楚描述：
 | 1 | `llmClient.ts`：新增 `completeWithTools()` | Anthropic + Gemini 各自實作 |
 | 2 | `config/prompts.json`：新增 transportation、改寫 coordinator system prompt | Prompt 先到位再改邏輯 |
 | 3 | `agentRegistry.ts`：移除硬編碼 prompt，改讀 prompts.json；新增 transportation | 清理舊包袱 |
-| 4 | `coordinatorExecutor.ts`：實作 agentic loop + `input-required` 處理 | 核心改動 |
+| 4 | `orchestratorExecutor.ts`：實作 agentic loop + `input-required` 處理 | 核心改動 |
 | 5 | 端到端測試：單輪完整資訊 / 多輪補齊資訊 / graceful degradation | 驗證三種路徑 |
 
 ---

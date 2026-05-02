@@ -270,8 +270,8 @@ const systemPrompt = `${baseSystemPrompt}\n\n## Current Travel Context\n${contex
 | 檔案 | 變更類型 | 說明 |
 |------|----------|------|
 | `src/services/contextAgent.ts` | 新建 | `ContextAgent` class，所有外部 API 呼叫 |
-| `src/agents/coordinatorExecutor.ts` | 修改 | `processCoordination()` 加入 `contextAgent.gather()` parallel 呼叫；context 注入 system prompt |
-| `docs/prompts/coordinator.md` | 修改 | 加入「如何使用 Travel Context 區塊」說明 |
+| `src/agents/orchestratorExecutor.ts` | 修改 | `processCoordination()` 加入 `contextAgent.gather()` parallel 呼叫；context 注入 system prompt |
+| `docs/prompts/orchestrator.md` | 修改 | 加入「如何使用 Travel Context 區塊」說明 |
 | `.env.example` | 不需改動 | 所有情境 API 使用現有 `TAVILY_API_KEY` 或免費無 key API |
 
 ---
@@ -306,8 +306,8 @@ if (isGoldenWeekJapan(destination, travelDates)) {
 | 3 | `contextAgent.ts` — `fetchVisaInfo()`（Tavily 搜尋 + LLM 萃取）|
 | 4 | `contextAgent.ts` — `fetchSafetyAlert()`（Tavily 搜尋）|
 | 5 | `contextAgent.ts` — `gather()` 整合，parallel Promise.allSettled |
-| 6 | `coordinatorExecutor.ts` — 注入 system prompt |
-| 7 | `coordinator.md` — 更新 prompt |
+| 6 | `orchestratorExecutor.ts` — 注入 system prompt |
+| 7 | `orchestrator.md` — 更新 prompt |
 | 8 | 端到端測試（見下）|
 
 ---

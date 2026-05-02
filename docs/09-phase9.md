@@ -89,8 +89,8 @@ extractAndSaveMemory()  ← 獨立 LLM call，只負責萃取
 | `web/src/pages/LogsPage.tsx` | 新建 | Log 頁面 UI |
 | `web/src/App.tsx` | 修改 | 新增 `/logs` 路由和 sidebar 連結 |
 | `docs/prompts/memory-extractor.md` | 新建 | 記憶萃取專用 prompt |
-| `src/agents/coordinatorExecutor.ts` | 修改 | 移除 `update_memory` tool、新增 `extractAndSaveMemory()` |
-| `docs/prompts/coordinator.md` | 修改 | 移除 `update_memory` 指引 |
+| `src/agents/orchestratorExecutor.ts` | 修改 | 移除 `update_memory` tool、新增 `extractAndSaveMemory()` |
+| `docs/prompts/orchestrator.md` | 修改 | 移除 `update_memory` 指引 |
 
 ---
 

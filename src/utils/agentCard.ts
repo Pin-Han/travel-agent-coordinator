@@ -1,15 +1,15 @@
 import type { AgentCard } from "@a2a-js/sdk";
-import { CoordinatorConfig } from "../types/index.js";
+import { OrchestratorConfig } from "../types/index.js";
 
-export function generateAgentCard(config: CoordinatorConfig): AgentCard {
+export function generateAgentCard(config: OrchestratorConfig): AgentCard {
   return {
     name: config.agentName,
     description: config.agentDescription,
     // Adjust the base URL and port as needed.
     url: `http://localhost:${config.port}/`,
     provider: {
-      organization: "Travel Coordination Services",
-      url: "https://travel-coordinator.com", // Added provider URL
+      organization: "Travel Orchestration Services",
+      url: "https://travel-orchestrator.com",
     },
     protocolVersion: "0.3.0", // A2A protocol this agent supports.
     version: "1.0.0", // Incremented version
@@ -24,14 +24,14 @@ export function generateAgentCard(config: CoordinatorConfig): AgentCard {
     defaultOutputModes: ["text/plain"],
     skills: [
       {
-        id: "travel_coordination",
-        name: "Travel Coordination",
+        id: "travel_orchestration",
+        name: "Travel Orchestration",
         description:
-          "Coordinate comprehensive travel planning including attractions, accommodation, and budget planning",
+          "Orchestrate comprehensive travel planning including attractions, accommodation, and budget planning",
         tags: [
           "travel",
           "planning",
-          "coordination",
+          "orchestration",
           "attractions",
           "accommodation",
         ],

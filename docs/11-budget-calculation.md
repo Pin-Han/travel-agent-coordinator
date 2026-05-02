@@ -177,8 +177,8 @@ function checkBudgetCompliance(
 | 檔案 | 變更類型 | 說明 |
 |------|----------|------|
 | `src/services/budgetCalculator.ts` | 新建 | `calculateBudgetBreakdown()`、`checkBudgetCompliance()` |
-| `src/agents/coordinatorExecutor.ts` | 修改 | `publishFinalPlan()` 前呼叫 `calculateBudget()`；compliance result 附加到回覆 |
-| `docs/prompts/coordinator.md` | 修改 | 加入費用明細的輸出格式說明 |
+| `src/agents/orchestratorExecutor.ts` | 修改 | `publishFinalPlan()` 前呼叫 `calculateBudget()`；compliance result 附加到回覆 |
+| `docs/prompts/orchestrator.md` | 修改 | 加入費用明細的輸出格式說明 |
 | `web/src/pages/ChatPage.tsx` | 修改（選做）| 費用明細顯示時，加入 budget bar（視覺化預算使用率）|
 
 ---
@@ -206,8 +206,8 @@ $745 ───────────────────▓▓▓▓▓▒
 |------|------|
 | 1 | `budgetCalculator.ts` — `calculateBudgetBreakdown()` |
 | 2 | `budgetCalculator.ts` — `checkBudgetCompliance()` |
-| 3 | `coordinatorExecutor.ts` — 整合到 `publishFinalPlan()` 流程 |
-| 4 | `coordinator.md` — 費用明細格式說明 |
+| 3 | `orchestratorExecutor.ts` — 整合到 `publishFinalPlan()` 流程 |
+| 4 | `orchestrator.md` — 費用明細格式說明 |
 | 5 | 驗證（見下）|
 | 6 | `ChatPage.tsx` — Budget Bar UI（選做）|
 

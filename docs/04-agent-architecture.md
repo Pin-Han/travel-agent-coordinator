@@ -70,7 +70,7 @@
 **修改檔案：**
 - `config/prompts.json`：新增 `transportation` 條目
 - `src/services/agentRegistry.ts`：新增 `transportation` agent 設定（port 3003）
-- `src/agents/coordinatorExecutor.ts`：在 accommodation 之後加入 step 3 transportation call
+- `src/agents/orchestratorExecutor.ts`：在 accommodation 之後加入 step 3 transportation call
 - `package.json`：`dev:agents` 腳本加入 :3003
 
 **Transportation Agent 的輸入：**
@@ -105,7 +105,7 @@
 
 ### 修復：`extractTravelInfo()` 語言問題
 
-`coordinatorExecutor.ts` 的 `extractTravelInfo()` 有以下問題：
+`orchestratorExecutor.ts` 的 `extractTravelInfo()` 有以下問題：
 - 預設 destination 硬編碼為 `"台北"`（英文查詢時會拿到錯誤預設值）
 - 預設 preferences 為 `["美食", "文化"]`（中文）
 - 只能解析 `(\d+)天` / `(\d+)元` 格式（中文數字模式）
@@ -145,7 +145,7 @@ Coordinator LLM Synthesis
 | `src/agents/transportationAgent.ts` | 新增 | Transportation AgentExecutor |
 | `src/servers/transportationServer.ts` | 新增 | Express :3003，A2A routes |
 | `src/services/agentRegistry.ts` | 修改 | 新增 transportation agent 設定 |
-| `src/agents/coordinatorExecutor.ts` | 修改 | 新增 Step 3、更新 integration 呼叫、修復 extractTravelInfo |
+| `src/agents/orchestratorExecutor.ts` | 修改 | 新增 Step 3、更新 integration 呼叫、修復 extractTravelInfo |
 | `package.json` | 修改 | dev:agents 加入 :3003 |
 
 ---
@@ -155,11 +155,11 @@ Coordinator LLM Synthesis
 | 步驟 | 內容 | 複雜度 |
 |------|------|--------|
 | 1 | `config/prompts.json`：更新 coordinator prompt + 新增 transportation | Low |
-| 2 | `coordinatorExecutor.ts`：修復 `extractTravelInfo()` | Low |
+| 2 | `orchestratorExecutor.ts`：修復 `extractTravelInfo()` | Low |
 | 3 | `agentRegistry.ts`：新增 transportation agent 設定 | Low |
 | 4 | `src/agents/transportationAgent.ts`：實作 executor（複製 accommodationAgent 模式） | Medium |
 | 5 | `src/servers/transportationServer.ts`：建立 :3003 server | Low |
-| 6 | `coordinatorExecutor.ts`：加入 Step 3 transportation call + 更新 integration | Medium |
+| 6 | `orchestratorExecutor.ts`：加入 Step 3 transportation call + 更新 integration | Medium |
 | 7 | `package.json`：更新 dev:agents script | Low |
 
 ---

@@ -42,7 +42,7 @@ export interface TaskData {
   apiCallStatus: APICallStatus;
 }
 
-export interface CoordinatorConfig {
+export interface OrchestratorConfig {
   port: number;
   agentId: string;
   agentName: string;

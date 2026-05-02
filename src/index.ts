@@ -10,9 +10,9 @@ import {
 import { A2AExpressApp } from "@a2a-js/sdk/server/express";
 import type { AgentCard } from "@a2a-js/sdk";
 
-import { TravelCoordinatorExecutor } from "./agents/coordinatorExecutor.js";
+import { TravelOrchestratorExecutor } from "./agents/orchestratorExecutor.js";
 import { generateAgentCard } from "./utils/agentCard.js";
-import { CoordinatorConfig } from "./types/index.js";
+import { OrchestratorConfig } from "./types/index.js";
 import { getPrompts, savePrompts } from "./services/promptStore.js";
 import { MemoryService } from "./services/memoryService.js";
 
@@ -20,7 +20,7 @@ import { MemoryService } from "./services/memoryService.js";
 dotenv.config();
 
 // 驗證必要的環境變數
-function validateEnvironment(): CoordinatorConfig {
+function validateEnvironment(): OrchestratorConfig {
   const provider = process.env.LLM_PROVIDER || "anthropic";
   if (provider === "gemini" && !process.env.GEMINI_API_KEY) {
     console.warn("⚠️  LLM_PROVIDER=gemini 但 GEMINI_API_KEY 未設定，請求時會失敗");
@@ -30,10 +30,10 @@ function validateEnvironment(): CoordinatorConfig {
 
   return {
     port: parseInt(process.env.PORT || "3000"),
-    agentId: process.env.COORDINATOR_AGENT_ID || "travel_coordinator_agent",
-    agentName: process.env.COORDINATOR_AGENT_NAME || "Travel Coordinator Agent",
+    agentId: process.env.ORCHESTRATOR_AGENT_ID || "travel_orchestrator_agent",
+    agentName: process.env.ORCHESTRATOR_AGENT_NAME || "Travel Orchestrator Agent",
     agentDescription:
-      process.env.COORDINATOR_AGENT_DESCRIPTION || "智能旅遊規劃協調服務",
+      process.env.ORCHESTRATOR_AGENT_DESCRIPTION || "智能旅遊規劃協調服務",
     maxCoordinationSteps: parseInt(process.env.MAX_COORDINATION_STEPS || "10"),
     taskTimeoutMs: parseInt(process.env.TASK_TIMEOUT_MS || "300000"),
   };
@@ -48,7 +48,7 @@ async function main() {
   const taskStore: TaskStore = new InMemoryTaskStore();
 
   // 2. Create AgentExecutor
-  const agentExecutor: AgentExecutor = new TravelCoordinatorExecutor(config);
+  const agentExecutor: AgentExecutor = new TravelOrchestratorExecutor(config);
   const memoryService = new MemoryService();
 
   // 3. Create DefaultRequestHandler

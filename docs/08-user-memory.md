@@ -214,9 +214,9 @@ DELETE /api/memory        ← 清除 memory（用戶可從 UI 操作）
 | 檔案 | 變更類型 | 說明 |
 |------|----------|------|
 | `src/services/memoryService.ts` | 新建 | `readMemory()` / `updateMemory()` / `clearMemory()` |
-| `src/agents/coordinatorExecutor.ts` | 修改 | 新增 `read_memory` / `update_memory` tool handling；注入 `MemoryService` |
+| `src/agents/orchestratorExecutor.ts` | 修改 | 新增 `read_memory` / `update_memory` tool handling；注入 `MemoryService` |
 | `src/services/agentRegistry.ts` | 無需改動 | Memory 由 coordinator 直接處理，不走 agent registry |
-| `docs/prompts/coordinator.md` | 修改 | 補充 Memory Tools 使用說明 |
+| `docs/prompts/orchestrator.md` | 修改 | 補充 Memory Tools 使用說明 |
 | `src/index.ts` | 修改 | 新增 `GET /api/memory` / `DELETE /api/memory` endpoint |
 | `web/src/pages/SettingsPage.tsx` | 修改（選做） | Memory 啟用/清除 UI |
 | `data/memory/` | 新建目錄 | JSON 記憶體儲存位置（加入 .gitignore） |
@@ -236,9 +236,9 @@ DELETE /api/memory        ← 清除 memory（用戶可從 UI 操作）
 | 步驟 | 內容 |
 |------|------|
 | 1 | `src/services/memoryService.ts` — `readMemory()` / `updateMemory()` / `clearMemory()` |
-| 2 | `coordinatorExecutor.ts` — 注入 MemoryService，新增兩個 tool definition |
-| 3 | `coordinatorExecutor.ts` — `executeTool()` 新增 `read_memory` / `update_memory` case |
-| 4 | `docs/prompts/coordinator.md` — Memory Tools 使用引導 |
+| 2 | `orchestratorExecutor.ts` — 注入 MemoryService，新增兩個 tool definition |
+| 3 | `orchestratorExecutor.ts` — `executeTool()` 新增 `read_memory` / `update_memory` case |
+| 4 | `docs/prompts/orchestrator.md` — Memory Tools 使用引導 |
 | 5 | `src/index.ts` — `/api/memory` endpoints |
 | 6 | 驗證（見下） |
 | 7 | `SettingsPage.tsx` — Memory 清除 UI（選做） |

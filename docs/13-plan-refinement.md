@@ -245,8 +245,8 @@ case "modify_accommodation":
 | 檔案 | 變更類型 | 說明 |
 |------|----------|------|
 | `src/services/planStateService.ts` | 新建 | PlanState CRUD；`planStates` Map；`rebuildMapData()` |
-| `src/agents/coordinatorExecutor.ts` | 修改 | 注入 PlanStateService；`classifyModificationIntent()`；各 case 處理 |
-| `docs/prompts/coordinator.md` | 修改 | 加入修改意圖識別邏輯；修改回覆格式要求 |
+| `src/agents/orchestratorExecutor.ts` | 修改 | 注入 PlanStateService；`classifyModificationIntent()`；各 case 處理 |
+| `docs/prompts/orchestrator.md` | 修改 | 加入修改意圖識別邏輯；修改回覆格式要求 |
 | `docs/prompts/accommodation.md` | 修改 | 加入 `modification: true` 時的行為說明（只輸出住宿，不重複景點）|
 | `docs/prompts/attractions.md` | 修改 | 同上，加入修改模式下的行為說明 |
 | `web/src/pages/ChatPage.tsx` | 修改 | 每次 artifact 更新時，同步更新地圖（Phase 11）|
@@ -256,7 +256,7 @@ case "modify_accommodation":
 ## Harness 視角
 
 **Guides 新增**：
-- `coordinator.md` 加入修改意圖識別規則（明確什麼情況觸發哪個 case）
+- `orchestrator.md` 加入修改意圖識別規則（明確什麼情況觸發哪個 case）
 - 各 agent prompt 加入「修改模式」說明，避免在只需要更新住宿時又輸出整份行程
 
 **Sensors 新增**：
@@ -273,12 +273,12 @@ case "modify_accommodation":
 | 步驟 | 內容 |
 |------|------|
 | 1 | `planStateService.ts` — PlanState 型別 + CRUD |
-| 2 | `coordinatorExecutor.ts` — `classifyModificationIntent()` |
-| 3 | `coordinatorExecutor.ts` — `modify_accommodation` case 完整流程 |
-| 4 | `coordinatorExecutor.ts` — `modify_attractions` / `modify_transportation` case |
-| 5 | `coordinatorExecutor.ts` — `full_replan` case（清除 state + 重走 Phase 5 流程）|
-| 6 | `coordinatorExecutor.ts` — `question` case（直接 LLM 回答）|
-| 7 | `docs/prompts/coordinator.md` — 更新 prompt |
+| 2 | `orchestratorExecutor.ts` — `classifyModificationIntent()` |
+| 3 | `orchestratorExecutor.ts` — `modify_accommodation` case 完整流程 |
+| 4 | `orchestratorExecutor.ts` — `modify_attractions` / `modify_transportation` case |
+| 5 | `orchestratorExecutor.ts` — `full_replan` case（清除 state + 重走 Phase 5 流程）|
+| 6 | `orchestratorExecutor.ts` — `question` case（直接 LLM 回答）|
+| 7 | `docs/prompts/orchestrator.md` — 更新 prompt |
 | 8 | 端到端測試（見下）|
 
 ---

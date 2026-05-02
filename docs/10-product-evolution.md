@@ -106,8 +106,8 @@ Sensors 新增：
 | `docs/prompts/transportation.md` | 加入 JSON schema 輸出要求 |
 | `src/services/schemaValidator.ts` | 新建：validate + retry logic |
 | `src/services/agentRegistry.ts` | agent 呼叫後加 schema validation |
-| `src/agents/coordinatorExecutor.ts` | coordinator 整合時使用結構化資料 |
-| `docs/prompts/coordinator.md` | 描述如何用結構化輸出合成最終規劃 |
+| `src/agents/orchestratorExecutor.ts` | coordinator 整合時使用結構化資料 |
+| `docs/prompts/orchestrator.md` | 描述如何用結構化輸出合成最終規劃 |
 
 ---
 
@@ -162,7 +162,7 @@ Sensors：
 | `web/src/pages/ChatPage.tsx` | 右側 MapPanel，根據 artifact 有無 map_data 顯示 |
 | `web/src/components/MapPanel.tsx` | 新建：Google Maps Embed 元件 |
 | `web/src/components/ExportMenu.tsx` | 新建：.ics / PDF / JSON 下載按鈕 |
-| `docs/prompts/coordinator.md` | 要求合成時輸出 map_data 區塊 |
+| `docs/prompts/orchestrator.md` | 要求合成時輸出 map_data 區塊 |
 
 ---
 
@@ -241,8 +241,8 @@ Plan State version: 2，地圖標記更新
 | 檔案 | 變更 |
 |------|------|
 | `src/services/planStateService.ts` | 新建：PlanState 的 CRUD，存 per-context |
-| `src/agents/coordinatorExecutor.ts` | 規劃前讀 PlanState；識別修改 vs 新規劃意圖；修改後更新 State |
-| `docs/prompts/coordinator.md` | 加入修改意圖識別邏輯、局部更新工作流程 |
+| `src/agents/orchestratorExecutor.ts` | 規劃前讀 PlanState；識別修改 vs 新規劃意圖；修改後更新 State |
+| `docs/prompts/orchestrator.md` | 加入修改意圖識別邏輯、局部更新工作流程 |
 | `web/src/pages/ChatPage.tsx` | 每次收到 artifact 更新 plan state，地圖同步更新 |
 
 ---
