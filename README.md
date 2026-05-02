@@ -39,16 +39,24 @@ graph TD
 
 ### How a request flows
 
+The orchestrator uses a **3-turn confirmation loop** — users review and approve each section before the next one is generated.
+
 ```
-1. read_memory()            — load stored user preferences
-2. ask_user() (if needed)   — clarify destination or duration
-3. call_agent(attractions)  → JSON output → Schema Validator
-4. call_agent(accommodation)→ JSON output → Schema Validator
-5. call_agent(transportation)→JSON output → Schema Validator
-6. Write final plan (text)
-7. Evaluator scores plan (0–10). Score < 7 → revise (max 2 rounds)
-8. calculateBudget()        — itemised cost table appended to plan
-9. extractAndSaveMemory()   — save new preferences for next session
+Turn 1 — Itinerary proposal
+  1. read_memory()             — load stored user preferences
+  2. ask_user() (if needed)    — clarify missing destination or duration
+  3. call_agent(attractions)   → JSON output → Schema Validator
+  4. Present day-by-day table → ask_user("Does this itinerary work?")
+
+Turn 2 — Accommodation (after user confirms itinerary)
+  5. call_agent(accommodation) → JSON output → Schema Validator
+  6. Present comparison table  → ask_user("Ready to see transport details?")
+
+Turn 3 — Transportation + Budget (after user confirms accommodation)
+  7. call_agent(transportation)→ JSON output → Schema Validator
+  8. calculateBudget()         — itemised cost table appended
+  9. Present routes + budget + practical tips (final response)
+ 10. extractAndSaveMemory()    — save new preferences for next session
 ```
 
 ### Key components
@@ -78,15 +86,11 @@ Start the system and try this prompt:
 
 > **"Plan me a 4-day Tokyo trip, budget $1000, 2 people, interested in temples and local food"**
 
-You'll see the Orchestrator's agentic loop in real time:
-1. User preferences loaded from memory
-2. Attractions specialist finds temple districts and food areas (returns structured JSON)
-3. Accommodation specialist finds hotels near attraction zones (returns structured JSON)
-4. Transportation specialist maps out transit options (returns structured JSON)
-5. Orchestrator synthesises a complete itinerary
-6. Evaluator scores the plan — if below 7/10, the plan is revised
-7. Budget Calculator appends an itemised cost table; flags if total exceeds $1000
-8. Preferences saved to memory for next session
+The Orchestrator walks you through the plan in three turns:
+
+**Turn 1** — Attractions specialist returns structured JSON → you see a concise day-by-day table → reply to confirm
+**Turn 2** — Accommodation specialist returns options → you see a comparison table → reply to confirm
+**Turn 3** — Transportation specialist returns routes → Budget Calculator appends cost breakdown → final response with practical tips → preferences saved to memory
 
 ## Features
 
