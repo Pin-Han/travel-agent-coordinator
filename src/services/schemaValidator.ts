@@ -10,6 +10,8 @@
 
 export interface AttractionItem {
   name: string;
+  lat: number;
+  lng: number;
   area: string;
   category: string;
   recommended_duration_hours: number;
@@ -32,6 +34,8 @@ export interface AttractionsOutput {
 
 export interface AccommodationItem {
   name: string;
+  lat: number;
+  lng: number;
   area: string;
   price_range_usd_per_night: { min: number; max: number };
   distance_to_attractions: string;
@@ -110,6 +114,12 @@ export function validateAttractions(raw: string): ValidationResult<AttractionsOu
     parsed.attractions.slice(0, 3).forEach((item: any, i: number) => {
       if (!item.name) errors.push(`attractions[${i}].name is required`);
       if (!item.area) errors.push(`attractions[${i}].area is required`);
+      if (typeof item.lat !== "number" || item.lat < -90 || item.lat > 90) {
+        errors.push(`attractions[${i}].lat must be a number between -90 and 90`);
+      }
+      if (typeof item.lng !== "number" || item.lng < -180 || item.lng > 180) {
+        errors.push(`attractions[${i}].lng must be a number between -180 and 180`);
+      }
     });
   }
   if (!Array.isArray(parsed.suggested_day_groupings) || parsed.suggested_day_groupings.length === 0) {
@@ -136,6 +146,12 @@ export function validateAccommodation(raw: string): ValidationResult<Accommodati
     parsed.recommendations.slice(0, 2).forEach((item: any, i: number) => {
       if (!item.name) errors.push(`recommendations[${i}].name is required`);
       if (!item.area) errors.push(`recommendations[${i}].area is required`);
+      if (typeof item.lat !== "number" || item.lat < -90 || item.lat > 90) {
+        errors.push(`recommendations[${i}].lat must be a number between -90 and 90`);
+      }
+      if (typeof item.lng !== "number" || item.lng < -180 || item.lng > 180) {
+        errors.push(`recommendations[${i}].lng must be a number between -180 and 180`);
+      }
     });
   }
 
