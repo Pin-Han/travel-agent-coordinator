@@ -1,4 +1,4 @@
-# Phase 5: Agentic Orchestrator — LLM-Driven Agent Dispatch
+# Phase 8: Agentic Orchestrator — LLM-Driven Agent Dispatch
 
 ## Context
 

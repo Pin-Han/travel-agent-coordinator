@@ -1,10 +1,10 @@
-# Phase 11：地圖視覺化 + 行程匯出
+# Phase 16：地圖視覺化 + 行程匯出
 
 ## Context
 
-Phase 10 完成結構化輸出後，attractions / accommodation / transportation 三個 agent 都會回傳有 `lat/lng`、`price_range`、`route` 的 JSON，而不是自由文字。Phase 11 把這份結構化資料渲染成互動地圖，並提供匯出成可用格式的功能。
+Phase 14 完成結構化輸出後，attractions / accommodation / transportation 三個 agent 都會回傳有 `lat/lng`、`price_range`、`route` 的 JSON，而不是自由文字。Phase 16 把這份結構化資料渲染成互動地圖，並提供匯出成可用格式的功能。
 
-**先決條件**：Phase 10（結構化輸出）必須先完成。
+**先決條件**：Phase 14（結構化輸出）必須先完成。
 
 ---
 
@@ -45,7 +45,7 @@ MapPanel 接收 MapData 渲染地圖 + 標記
 
 ---
 
-## MapData 結構（Phase 10 定義，Phase 11 消費）
+## MapData 結構（Phase 14 定義，Phase 16 消費）
 
 ```typescript
 interface MapData {
@@ -78,7 +78,7 @@ interface MapRoute {
 }
 ```
 
-coordinator prompt 在 Phase 10 已要求輸出此結構，Phase 11 只需消費。
+coordinator prompt 在 Phase 14 已要求輸出此結構，Phase 16 只需消費。
 
 ---
 

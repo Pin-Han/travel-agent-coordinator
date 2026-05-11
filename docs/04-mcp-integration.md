@@ -1,4 +1,4 @@
-# Phase 2：MCP 工具整合
+# Phase 4：MCP 工具整合
 
 > **目標**：讓每個 Sub-agent 成為真正的 MCP Client，呼叫真實外部 API，不靠 LLM 訓練知識產出資料  
 > **完成標準**：Attractions Agent 能搜到真實景點資訊；Flight Agent 能從 Amadeus Sandbox 拿到航班資料；行程確認後能寫入 Google Calendar  
@@ -288,7 +288,7 @@ ACCOMMODATION_MODE=a2a
 
 ---
 
-## 2.5 Phase 2 驗收標準
+## 2.5 Phase 4 驗收標準
 
 - [ ] Attractions Agent 呼叫 Brave Search，能回傳真實景點名稱（不是 LLM 幻想）
 - [ ] Flight Agent 呼叫 Amadeus Sandbox，能回傳結構化航班資料（含起降時間、價格）

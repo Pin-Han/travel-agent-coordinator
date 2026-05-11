@@ -1,8 +1,8 @@
-# Phase 3+ UX & Feature Improvements
+# Phase 5+ UX & Feature Improvements
 
 ## Context
 
-目前系統已完成 Phase 0–3（A2A sub-agents、Web UI、Streaming、MCP 整合），但在日常使用上有幾個痛點：
+目前系統已完成 Phase 0–5（A2A sub-agents、Web UI、Streaming、MCP 整合），但在日常使用上有幾個痛點：
 1. 每次重新整理頁面，對話紀錄就消失
 2. UI 文字夾雜中英文，不一致
 3. 沒有 token 用量可見性

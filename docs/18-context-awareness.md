@@ -1,12 +1,12 @@
-# Phase 14：情境感知
+# Phase 18：情境感知
 
 ## Context
 
 目前的規劃忽略了幾個讓旅遊計畫「貼近現實」的關鍵資訊：八月去日本要考慮颱風季、旅遊期間遇到當地國定假日景點可能關門、特定目的地需要提前辦簽證。
 
-Phase 14 新增一個 **Context Agent**，在主要的三個 agent 呼叫前 parallel 執行，把這些情境資訊注入規劃。
+Phase 18 新增一個 **Context Agent**，在主要的三個 agent 呼叫前 parallel 執行，把這些情境資訊注入規劃。
 
-**先決條件**：Phase 10（結構化輸出）。Phase 12（多輪精煉）完成後效果更好（情境更新後可局部修改行程）。
+**先決條件**：Phase 14（結構化輸出）。Phase 17（多輪精煉）完成後效果更好（情境更新後可局部修改行程）。
 
 ---
 
@@ -17,7 +17,7 @@ Phase 14 新增一個 **Context Agent**，在主要的三個 agent 呼叫前 par
 ```
 Coordinator Agentic Loop
     ↓ （收到完整旅遊資訊後）
-ContextAgent.gather()   ← Phase 14 新增，parallel 執行，不阻擋
+ContextAgent.gather()   ← Phase 18 新增，parallel 執行，不阻擋
     ↓
 context 注入 coordinator system prompt 或 agent 的 request
     ↓

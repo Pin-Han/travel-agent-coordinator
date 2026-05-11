@@ -1,5 +1,5 @@
 /**
- * Phase 10: Schema Sensor
+ * Phase 14: Schema Sensor
  *
  * Hard-validates structured JSON output from each specialist agent.
  * Validation failure triggers a one-shot retry with specific feedback.

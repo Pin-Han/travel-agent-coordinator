@@ -1,12 +1,12 @@
-# Phase 13：預算計算
+# Phase 15：預算計算
 
 ## Context
 
 「符合中等預算」不夠用。用戶想知道具體數字：這趟旅遊大概花多少錢？住宿佔多少？景點門票多少？餐飲呢？
 
-Phase 13 在 coordinator 整合完三個 agent 的結構化結果後，新增一個 `calculateBudget()` 步驟，輸出明細費用表，並在超出預算時自動警示。
+Phase 15 在 coordinator 整合完三個 agent 的結構化結果後，新增一個 `calculateBudget()` 步驟，輸出明細費用表，並在超出預算時自動警示。
 
-**先決條件**：Phase 10（結構化輸出，含費用欄位）。
+**先決條件**：Phase 14（結構化輸出，含費用欄位）。
 
 ---
 
@@ -16,11 +16,11 @@ Phase 13 在 coordinator 整合完三個 agent 的結構化結果後，新增一
 
 | 層級 | 來源 | 精準度 | 說明 |
 |------|------|--------|------|
-| 1（最準）| Tavily 搜尋 + 結構化輸出 | 高 | Agent 在 Phase 10 schema 裡已填入 `estimated_cost_usd` |
+| 1（最準）| Tavily 搜尋 + 結構化輸出 | 高 | Agent 在 Phase 14 schema 裡已填入 `estimated_cost_usd` |
 | 2（估算）| LLM 知識 | 中 | LLM 依目的地、住宿等級估算 |
 | 3（備援）| 預設費用區間 | 低 | 熱門城市的經驗值表 |
 
-Phase 13 優先使用層級 1，不足時 fallback 到層級 2。
+Phase 15 優先使用層級 1，不足時 fallback 到層級 2。
 
 ---
 
@@ -118,7 +118,7 @@ function calculateBudgetBreakdown(input: BudgetCalculationInput): CostBreakdown 
 
 ## 預算符合度 Sensor（Harness 核心）
 
-這是 Phase 13 最重要的 harness 改進：**把預算檢查從「LLM 說符合」變成「數字驗證」**。
+這是 Phase 15 最重要的 harness 改進：**把預算檢查從「LLM 說符合」變成「數字驗證」**。
 
 ```typescript
 function checkBudgetCompliance(
@@ -158,7 +158,7 @@ function checkBudgetCompliance(
 - `severity: "none"` → 在費用明細下方加一行 "✅ 符合預算"
 - `severity: "warning"` → 費用明細底部加警示黃色 block
 - `severity: "error"` → 費用明細底部加警示紅色 block + 具體調整建議
-- 兩種警示情況都**不阻擋回傳**，用戶知情後自行決定是否調整（配合 Phase 12 修改功能）
+- 兩種警示情況都**不阻擋回傳**，用戶知情後自行決定是否調整（配合 Phase 17 修改功能）
 
 ---
 
@@ -166,7 +166,7 @@ function checkBudgetCompliance(
 
 `meal_preference` 影響費用估算的精準度。取得方式（優先序）：
 
-1. **User Memory（Phase 8）**：記憶裡有「喜歡在地小吃」→ `budget`；「偏好精緻餐廳」→ `fine-dining`
+1. **User Memory（Phase 11）**：記憶裡有「喜歡在地小吃」→ `budget`；「偏好精緻餐廳」→ `fine-dining`
 2. **從用戶請求推斷**：「美食之旅」但未指定等級 → `mid-range`
 3. **預設**：`mid-range`（不詢問，避免對話碎片化）
 
@@ -220,7 +220,7 @@ $745 ───────────────────▓▓▓▓▓▒
 3. **有預算、明顯超出**：`budget_usd=500`，計算總費用 $745-$945 → 顯示 error 紅色 block + 具體建議
 4. **無預算**：不顯示符合度，只顯示費用明細
 5. **結構化資料缺少費用欄位**：`calculateBudgetBreakdown()` 使用 LLM fallback 估算，輸出加 "估算值" 標注
-6. **超出預算但用戶選擇不調整**：配合 Phase 12，用戶可以說「沒關係，保持原樣」
+6. **超出預算但用戶選擇不調整**：配合 Phase 17，用戶可以說「沒關係，保持原樣」
 
 ---
 
@@ -231,5 +231,5 @@ $745 ───────────────────▓▓▓▓▓▒
 | 景點 `estimated_cost_usd` 為 null | 標注「費用未知」，從總計排除 |
 | 住宿未指定晚數（無 `duration_days`）| 用 `planState.duration_days` |
 | 機票費用 | 明確標注「不含機票」，不估算（地區差異太大）|
-| 貨幣非美元（日圓、歐元）| Phase 10 schema 強制 USD，agent prompt 要求換算 |
+| 貨幣非美元（日圓、歐元）| Phase 14 schema 強制 USD，agent prompt 要求換算 |
 | `calculateBudget()` 本身拋出例外 | `try/catch`，不附加費用明細，不中斷主流程 |

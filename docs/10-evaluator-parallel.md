@@ -1,11 +1,11 @@
-# Phase 7: Evaluator Agent
+# Phase 10: Evaluator Agent
 
 ## Context
 
-Phase 5 的 Agentic Loop 讓 LLM 自主決定呼叫哪些 agent、何時詢問使用者，但規劃產出後沒有任何機制驗證品質。Phase 7 引入一個獨立的 **Evaluator Agent**，對 Coordinator 產出的草稿打分，不夠好就要求重做（feedback loop）。
+Phase 8 的 Agentic Loop 讓 LLM 自主決定呼叫哪些 agent、何時詢問使用者，但規劃產出後沒有任何機制驗證品質。Phase 10 引入一個獨立的 **Evaluator Agent**，對 Coordinator 產出的草稿打分，不夠好就要求重做（feedback loop）。
 
 > **注意：並行執行不在本 Phase 範圍內。**
-> 旅遊場景下，attractions → accommodation → transportation 的依賴鏈是 domain logic（先確認景點區域，再搜尋附近住宿），不應為了速度而犧牲推薦精準度。執行順序維持 Phase 5 的序列設計。
+> 旅遊場景下，attractions → accommodation → transportation 的依賴鏈是 domain logic（先確認景點區域，再搜尋附近住宿），不應為了速度而犧牲推薦精準度。執行順序維持 Phase 8 的序列設計。
 
 ---
 

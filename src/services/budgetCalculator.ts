@@ -1,8 +1,8 @@
 /**
- * Phase 11: Budget Calculator
+ * Phase 15: Budget Calculator
  *
  * Pure functions for computing travel cost breakdowns and checking budget compliance.
- * No external dependencies — all inputs come from Phase 10 structured agent outputs.
+ * No external dependencies — all inputs come from Phase 14 structured agent outputs.
  */
 
 import type { AttractionItem, AccommodationItem, TransportationOutput } from "./schemaValidator.js";

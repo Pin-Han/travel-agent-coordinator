@@ -217,7 +217,7 @@ export class TravelOrchestratorExecutor implements AgentExecutor {
     // Extract and save memory (independent LLM call, non-blocking on failure)
     await this.extractAndSaveMemory(loopResult.text, history, provider);
 
-    // Append budget breakdown (Phase 11) — non-blocking on failure
+    // Append budget breakdown (Phase 15) — non-blocking on failure
     const finalText = this.calculateAndAppendBudget(loopResult.text, loopResult.structuredResults, userRequest);
 
     // Final plan — publish artifact
@@ -362,7 +362,7 @@ export class TravelOrchestratorExecutor implements AgentExecutor {
             accumulator.breakdown.push({ step: `${agent_id} specialist`, input: tu.inputTokens ?? 0, output: tu.outputTokens ?? 0 });
           }
 
-          // Capture structured data for budget calculation (Phase 11)
+          // Capture structured data for budget calculation (Phase 15)
           if (agentResult.success && agentResult.data?.structuredData) {
             structuredResults.set(agent_id, agentResult.data.structuredData);
           }
