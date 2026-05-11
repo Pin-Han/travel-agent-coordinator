@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
+import MapPanel, { MapData } from "../components/MapPanel";
+import ExportMenu from "../components/ExportMenu";
 
 interface Message {
   id: string;
@@ -8,6 +10,7 @@ interface Message {
   timestamp: string;
   tokenUsage?: { input: number; output: number };
   durationMs?: number;
+  mapData?: MapData | null;
 }
 
 export interface LogEntry {
@@ -124,6 +127,10 @@ export default function ChatPage() {
   const [currentStatus, setCurrentStatus] = useState("");
   const [sessionTokens, setSessionTokens] = useState(0);
   const [contextId, setContextId] = useState<string>(loadContextId);
+  const [activeMapData, setActiveMapData] = useState<MapData | null>(null);
+  const [activeStructuredData, setActiveStructuredData] = useState<any>(null);
+  const [activePlanText, setActivePlanText] = useState("");
+  const [mobileView, setMobileView] = useState<"chat" | "map">("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -142,6 +149,10 @@ export default function ChatPage() {
     setSessionTokens(0);
     setCurrentStatus("");
     localStorage.removeItem(STORAGE_KEY);
+    setActiveMapData(null);
+    setActiveStructuredData(null);
+    setActivePlanText("");
+    setMobileView("chat");
   }
 
   async function send() {
@@ -208,6 +219,7 @@ export default function ChatPage() {
         let buffer = "";
         let finalText = "";
         let tokenUsage: Message["tokenUsage"] | undefined;
+        let receivedMapData: MapData | null = null;
 
         outer: while (true) {
           const { done, value } = await reader.read();
@@ -241,16 +253,24 @@ export default function ChatPage() {
             } else if (kind === "artifact-update") {
               const txt: string | undefined = event.artifact?.parts?.[0]?.text;
               if (txt) finalText = txt;
-              const usage = event.artifact?.metadata?.tokenUsage;
-              if (usage) {
-                tokenUsage = { input: usage.inputTokens, output: usage.outputTokens };
-                setSessionTokens((prev) => prev + usage.inputTokens + usage.outputTokens);
+              const meta = event.artifact?.metadata;
+              if (meta?.tokenUsage) {
+                tokenUsage = { input: meta.tokenUsage.inputTokens, output: meta.tokenUsage.outputTokens };
+                setSessionTokens((prev) => prev + meta.tokenUsage.inputTokens + meta.tokenUsage.outputTokens);
+              }
+              if (meta?.mapData) {
+                receivedMapData = meta.mapData as MapData;
               }
             }
           }
         }
 
         const durationMs = Date.now() - startTime;
+
+        if (receivedMapData) {
+          setActiveMapData(receivedMapData);
+          setActivePlanText(finalText);
+        }
 
         // Save to log
         saveLogEntry({
@@ -271,6 +291,7 @@ export default function ChatPage() {
             timestamp: new Date().toISOString(),
             tokenUsage,
             durationMs,
+            mapData: receivedMapData,
           },
         ]);
         return;
@@ -335,84 +356,119 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            {(msg.role === "agent" || msg.role === "error") && (
-              <div className={`w-7 h-7 rounded-full text-white text-xs flex items-center justify-center mr-2 mt-1 shrink-0 ${
-                msg.role === "error" ? "bg-red-500" : "bg-blue-600"
-              }`}>
-                {msg.role === "error" ? "!" : "AI"}
-              </div>
-            )}
-            <div className="flex flex-col max-w-[85%] sm:max-w-[75%]">
-              <div
-                className={`rounded-2xl px-4 py-3 text-sm ${
-                  msg.role === "user"
-                    ? "bg-blue-600 text-white rounded-tr-sm"
-                    : msg.role === "error"
-                    ? "bg-red-50 border border-red-200 text-red-700 rounded-tl-sm"
-                    : "bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm"
-                }`}
-              >
-                {msg.role === "agent" ? (
-                  <div className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-headings:font-semibold prose-h2:text-base prose-h3:text-sm">
-                    <ReactMarkdown>{msg.text}</ReactMarkdown>
-                  </div>
-                ) : msg.role === "error" ? (
-                  <div className="flex items-start gap-2">
-                    <svg className="w-4 h-4 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                    </svg>
-                    {msg.text}
-                  </div>
-                ) : (
-                  msg.text
-                )}
-              </div>
-              {msg.role === "agent" && (
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className="text-[11px] text-gray-400 mt-1 ml-1">
-                    {msg.durationMs != null && `${(msg.durationMs / 1000).toFixed(1)}s`}
-                    {msg.durationMs != null && msg.tokenUsage && " · "}
-                    {msg.tokenUsage && `Input ${msg.tokenUsage.input.toLocaleString()} · Output ${msg.tokenUsage.output.toLocaleString()} tokens`}
-                  </span>
-                  <CopyButton text={msg.text} />
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {/* Single-line progress indicator while loading */}
-        {loading && <ProgressIndicator status={currentStatus} />}
-
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Input */}
-      <div className="px-4 sm:px-6 py-4 border-t bg-white">
-        <div className="flex gap-2 sm:gap-3">
-          <input
-            className="flex-1 min-w-0 border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Describe your trip..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-            disabled={loading}
-          />
+      {/* Mobile tab toggle (only shown when map data exists) */}
+      {activeMapData && (
+        <div className="md:hidden flex border-b bg-white">
           <button
-            onClick={send}
-            disabled={loading || !input.trim()}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-4 sm:px-5 py-2 rounded-xl text-sm font-medium transition-colors shrink-0"
+            onClick={() => setMobileView("chat")}
+            className={`flex-1 py-2 text-sm font-medium text-center ${mobileView === "chat" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500"}`}
           >
-            Send
+            💬 Chat
+          </button>
+          <button
+            onClick={() => setMobileView("map")}
+            className={`flex-1 py-2 text-sm font-medium text-center ${mobileView === "map" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500"}`}
+          >
+            🗺 Map
           </button>
         </div>
+      )}
+
+      {/* Main content area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Chat column */}
+        <div className={`flex flex-col ${activeMapData ? "md:w-[60%]" : "w-full"} ${activeMapData && mobileView === "map" ? "hidden md:flex" : "flex"} w-full`}>
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                {(msg.role === "agent" || msg.role === "error") && (
+                  <div className={`w-7 h-7 rounded-full text-white text-xs flex items-center justify-center mr-2 mt-1 shrink-0 ${
+                    msg.role === "error" ? "bg-red-500" : "bg-blue-600"
+                  }`}>
+                    {msg.role === "error" ? "!" : "AI"}
+                  </div>
+                )}
+                <div className="flex flex-col max-w-[85%] sm:max-w-[75%]">
+                  <div
+                    className={`rounded-2xl px-4 py-3 text-sm ${
+                      msg.role === "user"
+                        ? "bg-blue-600 text-white rounded-tr-sm"
+                        : msg.role === "error"
+                        ? "bg-red-50 border border-red-200 text-red-700 rounded-tl-sm"
+                        : "bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm"
+                    }`}
+                  >
+                    {msg.role === "agent" ? (
+                      <div className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-headings:font-semibold prose-h2:text-base prose-h3:text-sm">
+                        <ReactMarkdown>{msg.text}</ReactMarkdown>
+                      </div>
+                    ) : msg.role === "error" ? (
+                      <div className="flex items-start gap-2">
+                        <svg className="w-4 h-4 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                        </svg>
+                        {msg.text}
+                      </div>
+                    ) : (
+                      msg.text
+                    )}
+                  </div>
+                  {msg.role === "agent" && (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-[11px] text-gray-400 mt-1 ml-1">
+                        {msg.durationMs != null && `${(msg.durationMs / 1000).toFixed(1)}s`}
+                        {msg.durationMs != null && msg.tokenUsage && " · "}
+                        {msg.tokenUsage && `Input ${msg.tokenUsage.input.toLocaleString()} · Output ${msg.tokenUsage.output.toLocaleString()} tokens`}
+                      </span>
+                      <CopyButton text={msg.text} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {loading && <ProgressIndicator status={currentStatus} />}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Input */}
+          <div className="px-4 sm:px-6 py-4 border-t bg-white">
+            <div className="flex gap-2 sm:gap-3">
+              <input
+                className="flex-1 min-w-0 border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Describe your trip..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
+                disabled={loading}
+              />
+              <button
+                onClick={send}
+                disabled={loading || !input.trim()}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-4 sm:px-5 py-2 rounded-xl text-sm font-medium transition-colors shrink-0"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Map panel (right side on desktop, full screen on mobile "map" tab) */}
+        {activeMapData && (
+          <div className={`${mobileView === "chat" ? "hidden md:flex" : "flex"} md:w-[40%] w-full flex-col border-l bg-gray-50`}>
+            <div className="px-4 py-2 border-b bg-white flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">🗺 Trip Map</span>
+              <ExportMenu structuredData={activeStructuredData} planText={activePlanText} />
+            </div>
+            <div className="flex-1 p-2">
+              <MapPanel mapData={activeMapData} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
