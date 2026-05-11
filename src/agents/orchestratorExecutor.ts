@@ -322,10 +322,10 @@ export class TravelOrchestratorExecutor implements AgentExecutor {
           // Empty / too short — LLM failed to use tools. Return a fallback preference question.
           console.warn(`[Orchestrator] LLM returned no tools and short text on turn ${turn}: "${finalText}"`);
           const fallbackQuestion =
-            "我很樂意幫你規劃旅行！為了給你最好的建議，想先了解一下：\n\n" +
-            "1. **幾個人**去？\n" +
-            "2. **預算**大概多少？\n" +
-            "3. 有沒有特別想去的地方或**偏好的活動**？（例如：美食、寺廟、購物、戶外活動）";
+            "I'd love to help you plan your trip! To give you the best recommendations, could you tell me:\n\n" +
+            "1. **How many people** are traveling?\n" +
+            "2. What's your approximate **budget**?\n" +
+            "3. Any specific places or **activities** you're interested in? (e.g. local food, temples, shopping, outdoor activities)";
           return { type: "ask_user", text: fallbackQuestion, tokenUsage: accumulator, structuredResults };
         }
 
