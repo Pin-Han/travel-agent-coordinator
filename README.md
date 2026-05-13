@@ -42,21 +42,24 @@ graph TD
 The orchestrator uses a **3-turn confirmation loop** — users review and approve each section before the next one is generated.
 
 ```
-Turn 1 — Itinerary proposal
+Turn 0 — Preference gathering
   1. read_memory()             — load stored user preferences
-  2. ask_user() (if needed)    — clarify missing destination or duration
-  3. call_agent(attractions)   → JSON output → Schema Validator
-  4. Present day-by-day table → ask_user("Does this itinerary work?")
+  2. ask_user()                — 5-item check (destination, dates, travelers, budget, interests)
+  3. Repeat until all key info is collected
+
+Turn 1 — Itinerary proposal
+  4. call_agent(attractions)   → JSON output → Schema Validator
+  5. Present day-by-day table → ask_user("Does this itinerary work?")
 
 Turn 2 — Accommodation (after user confirms itinerary)
-  5. call_agent(accommodation) → JSON output → Schema Validator
-  6. Present comparison table  → ask_user("Ready to see transport details?")
+  6. call_agent(accommodation) → JSON output → Schema Validator
+  7. Present comparison table  → ask_user("Ready to see transport details?")
 
 Turn 3 — Transportation + Budget (after user confirms accommodation)
-  7. call_agent(transportation)→ JSON output → Schema Validator
-  8. calculateBudget()         — itemised cost table appended
-  9. Present routes + budget + practical tips (final response)
- 10. extractAndSaveMemory()    — save new preferences for next session
+  8. call_agent(transportation)→ JSON output → Schema Validator
+  9. calculateBudget()         — itemised cost table appended
+ 10. Present routes + budget + practical tips (final response)
+ 11. extractAndSaveMemory()    — save new preferences for next session
 ```
 
 ### Key components
@@ -86,17 +89,23 @@ Start the system and try this prompt:
 
 > **"Plan me a 4-day Tokyo trip, budget $1000, 2 people, interested in temples and local food"**
 
-The Orchestrator walks you through the plan in three turns:
+The Orchestrator first gathers your preferences (destination, dates, travelers, budget, interests), then walks you through the plan in three turns:
 
-**Turn 1** — Attractions specialist returns structured JSON → you see a concise day-by-day table → reply to confirm
-**Turn 2** — Accommodation specialist returns options → you see a comparison table → reply to confirm
+**Turn 1** — Attractions specialist returns structured JSON → you see a concise day-by-day table with map → reply to confirm
+**Turn 2** — Accommodation specialist returns options → you see a comparison table with map markers → reply to confirm
 **Turn 3** — Transportation specialist returns routes → Budget Calculator appends cost breakdown → final response with practical tips → preferences saved to memory
+
+Use the **Export menu** to download your itinerary as an `.ics` calendar file or copy the raw JSON.
 
 ## Features
 
 - **Agentic Orchestrator** — LLM-driven dispatch via tool use; agents called dynamically, not hardcoded
+- **Preference Gathering** — 5-item check (destination, dates, travelers, budget, interests) before planning; works with both Anthropic and Gemini providers
+- **3-Turn Confirmation Flow** — Itinerary → Accommodation → Transportation presented step-by-step; users review and approve each section
 - **Structured JSON output** — All specialist agents return typed JSON; Schema Validator enforces required fields with retry
 - **Budget Calculator** — Itemised cost breakdown (attractions, accommodation, meals, transit) computed from structured agent output; overage sensor flags plans that exceed the stated budget (warning ≤20%, error >20%)
+- **Map Visualisation** — Interactive Leaflet + OpenStreetMap map with attraction (📍) and accommodation (🏨) markers; click for details
+- **Itinerary Export** — `.ics` calendar export and JSON clipboard copy from the export menu
 - **Evaluator Agent** — Independent LLM scores each draft plan (0–10); score < 7 triggers up to 2 revision rounds
 - **User Memory** — Preferences persist across sessions (`data/memory/default.json`); automatically applied to future plans
 - **Request Logs** — Every request logged to browser localStorage; view step-by-step timeline in the Logs page
@@ -183,6 +192,9 @@ src/
 
 web/
 ├── src/
+│   ├── components/
+│   │   ├── MapPanel.tsx         # Leaflet + OpenStreetMap interactive map
+│   │   └── ExportMenu.tsx       # .ics calendar export + JSON clipboard copy
 │   ├── pages/
 │   │   ├── ChatPage.tsx         # Conversation UI + single-line progress + log collection
 │   │   ├── LogsPage.tsx         # Request history with step-by-step timeline
@@ -269,7 +281,7 @@ Make sure you ran `npm install` inside the `web/` directory, and that the orches
 - [x] Phase 13 — Orchestrator conversation flow optimization (prompt-only)
 - [x] Phase 14 — Structured output: agents return typed JSON; Schema Validator with retry
 - [x] Phase 15 — Budget calculation: itemised cost breakdown with overage alerts
-- [ ] Phase 16 — Map visualisation + itinerary export (.ics, PDF)
+- [x] Phase 16 — Map visualisation (Leaflet + OpenStreetMap) + itinerary export (.ics, JSON)
 - [ ] Phase 17 — Multi-round refinement: partial updates without full regeneration
 - [ ] Phase 18 — Context awareness: weather, holidays, visa requirements
 - [x] Phase 19 — 3-turn confirmation flow: itinerary → accommodation → transport (prompt-only)
