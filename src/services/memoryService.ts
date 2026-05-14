@@ -28,6 +28,8 @@ export interface MemoryInsights {
 
 const MAX_INSIGHTS = 20;
 const MAX_VISITED = 50;
+const MAX_TRAVEL_STYLE = 30;
+const MAX_AVOIDS = 30;
 
 function dedupe(arr: string[]): string[] {
   return [...new Set(arr)];
@@ -80,14 +82,14 @@ export class MemoryService {
       memory.preferences.travelStyle = dedupe([
         ...memory.preferences.travelStyle,
         ...insights.newPreferences,
-      ]);
+      ]).slice(-MAX_TRAVEL_STYLE);
     }
 
     if (insights.avoids?.length) {
       memory.preferences.avoids = dedupe([
         ...memory.preferences.avoids,
         ...insights.avoids,
-      ]);
+      ]).slice(-MAX_AVOIDS);
     }
 
     if (insights.visitedPlaces?.length) {

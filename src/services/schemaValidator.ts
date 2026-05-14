@@ -85,10 +85,11 @@ export function extractJSON(text: string): any | null {
     try { return JSON.parse(fenceMatch[1]); } catch {}
   }
 
-  // Try first {...} block
-  const braceMatch = trimmed.match(/(\{[\s\S]*\})/);
-  if (braceMatch) {
-    try { return JSON.parse(braceMatch[1]); } catch {}
+  // Try first {...} block (greedy — outermost braces)
+  const braceStart = trimmed.indexOf("{");
+  const braceEnd = trimmed.lastIndexOf("}");
+  if (braceStart !== -1 && braceEnd > braceStart) {
+    try { return JSON.parse(trimmed.slice(braceStart, braceEnd + 1)); } catch {}
   }
 
   // Try raw parse
@@ -181,9 +182,11 @@ export function validateTransportation(raw: string): ValidationResult<Transporta
 // ── Retry feedback builder ────────────────────────────────────────────────────
 
 export function buildRetryFeedback(agentId: string, errors: string[]): string {
+  const errorList = errors.slice(0, 10).map((e) => `- ${e}`).join("\n");
+  const truncated = errors.length > 10 ? `\n... and ${errors.length - 10} more errors` : "";
   return (
     `Your previous response was not valid JSON or was missing required fields.\n` +
-    `Issues found:\n${errors.map((e) => `- ${e}`).join("\n")}\n\n` +
+    `Issues found:\n${errorList}${truncated}\n\n` +
     `Please respond again with ONLY a valid JSON object. Do not include any explanation, ` +
     `markdown, or text outside the JSON.`
   );

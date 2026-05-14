@@ -114,9 +114,9 @@ export function calculateBudgetBreakdown(input: BudgetCalculationInput): CostBre
 
   // Meals: per-person per-day rate × travelers × duration_days
   const mealRates: Record<"budget" | "mid-range" | "fine-dining", number> = {
-    budget: 20,
-    "mid-range": 45,
-    "fine-dining": 100,
+    budget: 25,
+    "mid-range": 50,
+    "fine-dining": 120,
   };
   const mealRate = mealRates[meal_preference ?? "mid-range"];
   const mealsCost = mealRate * travelers * duration_days;
